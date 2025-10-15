@@ -1,0 +1,6 @@
+(library
+    (name pyro_caml)
+    (public_name pyro_caml)
+    (wrapped false)
+    (libraries runtime_events unix mtime.clock)
+    )

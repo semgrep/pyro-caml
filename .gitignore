@@ -1,0 +1,15 @@
+.DS_Store
+.idea
+*.log
+tmp/
+# opam
+_opam/
+
+# dune
+_build/
+
+# direnv
+.direnv/
+
+/target/
+*.events

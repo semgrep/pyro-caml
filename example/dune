@@ -1,0 +1,9 @@
+(executable
+ (name example)
+ (public_name example)
+ (libraries pyro_caml unix)
+ (modes exe)
+(foreign_stubs
+  (language c)
+  (names example_stubs)
+  (flags :standard)))

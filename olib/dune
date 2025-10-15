@@ -1,0 +1,5 @@
+(executable
+ (name register)
+ (public_name register)
+ (libraries pyro_caml)
+ (modes exe object))
