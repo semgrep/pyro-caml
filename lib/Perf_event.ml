@@ -17,17 +17,21 @@
 (* Prelude *)
 (*****************************************************************************)
 
+type event =
+  | Point of (int64 * Stack_trace.raw_stack_trace)
+  | Enter of Stack_trace.raw_stack_trace
+  | Exit of int (* thread id *)
+
 type Runtime_events.User.tag += Perf_event_tag
 
 let perf_event_type =
-  let encode (bytes : bytes) (raw_stack_trace : Stack_trace.raw_stack_trace) :
-      int =
-    let marshaled = Marshal.to_bytes raw_stack_trace [] in
+  let encode (bytes : bytes) (e : event) : int =
+    let marshaled = Marshal.to_bytes e [] in
     let len = Bytes.length marshaled in
     Bytes.blit marshaled 0 bytes 0 len ;
     len
   in
-  let decode (bytes : bytes) (_len : int) : Stack_trace.raw_stack_trace =
+  let decode (bytes : bytes) (_len : int) : event =
     Marshal.from_bytes bytes 0
   in
   Runtime_events.Type.register ~encode ~decode
@@ -42,6 +46,8 @@ let sample_rate =
 
 let sample_rate_ms = 1000.0 /. float_of_int sample_rate
 
+let sample_rate_ns = Int64.of_float (sample_rate_ms *. 1_000_000.0)
+
 let last_emitted_timestamp_key : int64 option Domain.DLS.key =
   Domain.DLS.new_key (fun () -> None)
 
@@ -54,11 +60,13 @@ let need_to_emit (now : int64) =
       let elapsed_ms = Int64.div elapsed 1_000_000L |> Int64.to_float in
       elapsed_ms >= sample_rate_ms
 
-let emit_bt ?(repeat = 0) raw_backtrace =
-  let slots = Stack_trace.slots_of_raw_backtrace raw_backtrace in
-  let raw_stack_trace = Stack_trace.raw_stack_trace_of_slots slots in
+let emit_point_event ?(repeat = 0) raw_backtrace =
+  let raw_stack_trace =
+    Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
+  in
+  let event = Point (Mtime_clock.now_ns (), raw_stack_trace) in
   for _i = 0 to repeat do
-    Runtime_events.User.write perf_event raw_stack_trace
+    Runtime_events.User.write perf_event event
   done
 [@@inline always]
 
@@ -66,12 +74,19 @@ let record_bt raw_backtrace =
   let now = Mtime_clock.elapsed_ns () in
   if need_to_emit now then (
     Domain.DLS.set last_emitted_timestamp_key (Some now) ;
-    emit_bt raw_backtrace )
+    emit_point_event raw_backtrace )
 [@@inline always]
 
-let record () =
-  let raw_backtrace = Printexc.get_raw_backtrace () in
-  record_bt raw_backtrace
+let enter raw_backtrace =
+  let raw_stack_trace =
+    Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
+  in
+  Runtime_events.User.write perf_event (Enter raw_stack_trace)
+[@@inline always]
+
+let exit_ () =
+  let tid = (Domain.self () :> int) in
+  Runtime_events.User.write perf_event (Exit tid)
 [@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
@@ -90,31 +105,79 @@ let with_memprof_sampler f =
     ~finally:(fun () -> Gc.Memprof.stop () ; Gc.Memprof.discard memprof)
     f
 
+type child_state = {thread_table: (int, Stack_trace.t Stack.t) Hashtbl.t}
+
+let samples_of_child_state (child_state : child_state) =
+  Hashtbl.fold
+    (fun _tid stack acc ->
+      let sts = Stack.top_opt stack |> Option.to_list in
+      sts @ acc )
+    child_state.thread_table []
+
 let create_cursor path pid =
-  (* Check if path/pid.events exists *)
-  let events_file = Printf.sprintf "%s/%d.events" path pid in
-  while not (Sys.file_exists events_file) do
-    Unix.sleepf 0.1
-  done ;
   try Ok (Runtime_events.create_cursor (Some (path, pid)))
   with Failure msg -> Error (Printf.sprintf "Failed to create cursor: %s" msg)
 
 let empty_callbacks = Runtime_events.Callbacks.create ()
 
-let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor_opt =
-  match cursor_opt with
+let state = (Mutex.create (), {thread_table= Hashtbl.create 16})
+
+let with_state f =
+  let m, s = state in
+  Mutex.lock m ;
+  Fun.protect ~finally:(fun () -> Mutex.unlock m) (fun () -> f s)
+
+let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor_res =
+  match cursor_res with
   | Error msg ->
       Printf.eprintf "No cursor, cannot read events: %s\n%!" msg ;
       []
   | Ok cursor ->
-      let sts = ref [] in
+      let points = ref [] in
       let callbacks =
         Runtime_events.Callbacks.add_user_event perf_event_type
           (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
-               _event_t (raw_stack_trace : Stack_trace.raw_stack_trace) ->
-            let st = Stack_trace.t_of_raw_stack_trace raw_stack_trace in
-            sts := st :: !sts )
+               _event_t (e : event) ->
+            match e with
+            | Exit tid ->
+                (* pop st from thread stack *)
+                with_state (fun state ->
+                    let stack =
+                      Hashtbl.find_opt state.thread_table tid
+                      |> Option.value ~default:(Stack.create ())
+                    in
+                    match Stack.pop_opt stack with
+                    | None ->
+                        Printf.eprintf
+                          "Warning: pop on empty stack from thread %d\n%!" tid ;
+                        ()
+                    | Some _ ->
+                        Hashtbl.replace state.thread_table tid stack )
+            | Enter e ->
+                let st = Stack_trace.t_of_raw_stack_trace e in
+                let tid = st.thread_id in
+                (* push new st on thread stack *)
+                with_state (fun state ->
+                    let stack =
+                      Hashtbl.find_opt state.thread_table tid
+                      |> Option.value ~default:(Stack.create ())
+                    in
+                    Stack.push st stack ;
+                    Hashtbl.replace state.thread_table tid stack )
+            | Point (time, raw_st) ->
+                let now = Mtime_clock.now_ns () in
+                (* if it was within the last sampling rate include it *)
+                if Int64.sub now time < sample_rate_ns then
+                  let st = Stack_trace.t_of_raw_stack_trace raw_st in
+                  points := st :: !points )
           callbacks
       in
       let _n_events = Runtime_events.read_poll cursor callbacks max_events in
-      List.rev !sts
+      let points = !points in
+      let point_thids = List.map (fun st -> st.Stack_trace.thread_id) points in
+      let state_samples =
+        with_state (fun state -> samples_of_child_state state)
+        |> List.filter (fun st ->
+               not (List.mem st.Stack_trace.thread_id point_thids) )
+      in
+      points @ state_samples

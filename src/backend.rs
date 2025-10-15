@@ -120,7 +120,9 @@ impl Backend for CamlSpy {
             vec![empty_frame],
         );
         let sampler = thread::spawn(move || {
+            log::debug!(target:LOG_TAG, "starting sampler thread");
             while running.load(Ordering::Relaxed) {
+                log::trace!(target:LOG_TAG, "sampling...");
                 let backend_config = backend_config.lock()?;
                 let mut stack_frames = OCAML_GC.with_borrow(|gc| {
                     ocaml_intf::read_poll(
@@ -129,13 +131,22 @@ impl Backend for CamlSpy {
                         backend_config.deref(),
                         config.pid,
                     )
-                })?;
+                });
+                let mut stack_frames = match stack_frames {
+                    Ok(frames) => frames,
+                    Err(e) => {
+                        log::error!(target:LOG_TAG, "failed to read poll: {}", e);
+                        vec![]
+                    }
+                };
 
                 if stack_frames.is_empty() {
                     // push an empty stack_trace to indicate idle
+                    log::trace!(target:LOG_TAG, "no stack frames found, pushing empty stack trace");
                     stack_frames.push(empty_stack_trace.clone());
                 }
 
+                log::trace!(target:LOG_TAG, "got {} stack frames", stack_frames.clone().len());
                 for st in stack_frames.into_iter() {
                     let stack_trace = st + &ruleset.lock()?.clone();
                     buffer.lock()?.record(stack_trace).unwrap();

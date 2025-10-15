@@ -28,17 +28,15 @@ let example_func () =
 let example_func3 () = My_module.do_long_thing ()
 
 let () =
+  Perf_event.enter Printexc.(get_callstack max_int) ;
   Runtime_events.start () ;
-  (* let cursor = Runtime_events.create_cursor (Some (Sys.getcwd (), 23674)) in *)
-  let cursor = Runtime_events.create_cursor None in
   Perf_event.with_memprof_sampler
   @@ fun () ->
   Printf.printf "Starting loop\n" ;
   flush_all () ;
-  (* while true do *)
-  for _i = 1 to 10 do
+  ignore example_func ;
+  ignore example_func3 ;
+  while true do
     example_func () ; example_func3 () ; example_func () ; example_func3 ()
   done ;
-  (* done ; *)
-  let sts = Perf_event.read_poll (Ok cursor) in
-  Printf.printf "Example: Wrote %d stack\n" (List.length sts)
+  Perf_event.exit_ ()

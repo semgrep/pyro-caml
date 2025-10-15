@@ -19,7 +19,7 @@
 
 type slot = Printexc.backtrace_slot
 
-type raw_stack_trace = {slots: slot list; thread_id: int; thread_name: string}
+type raw_stack_trace = {slots: slot list; domain_id: int; thread_name: string}
 
 let map_raw_backtrace_slot f slot =
   let rec map_raw_backtrace_slot' f slot acc =
@@ -58,7 +58,10 @@ let print_callstack ?max_frames () =
 let raw_stack_trace_of_slots slots : raw_stack_trace =
   let did = (Domain.self () :> int) in
   let name = if Domain.is_main_domain () then "main" else string_of_int did in
-  {slots; thread_id= did; thread_name= name}
+  {slots; domain_id= did; thread_name= name}
+
+let raw_stack_trace_of_backtrace bt =
+  bt |> slots_of_raw_backtrace |> raw_stack_trace_of_slots
 
 let get_raw_stack_trace ?max_frames () =
   let cs = get_callstack ?max_frames () in
@@ -97,5 +100,5 @@ type t = {frames: frame list; thread_id: int; thread_name: string}
 let t_of_raw_stack_trace raw_stack_trace =
   let frames = stack_frames_of_slots raw_stack_trace.slots in
   { frames
-  ; thread_id= raw_stack_trace.thread_id
+  ; thread_id= raw_stack_trace.domain_id
   ; thread_name= raw_stack_trace.thread_name }
