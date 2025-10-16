@@ -50,7 +50,7 @@
         devShells.default = pkgs.mkShell {
           inputsFrom = builtins.attrValues packages;
           buildInputs = devPackages ++ [
-            # You can add packages from nixpkgs here
+            pkgs.rust-analyzer
           ];
         };
       }

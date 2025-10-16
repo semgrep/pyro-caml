@@ -133,25 +133,6 @@ let wrap_pyro_caml expr =
                      (Exp.apply (var raise_ident) [(Nolabel, var "e")]) ) ] ) ]
        (Exp.sequence (exit_pyro_caml loc) (var "r")) )
 
-let rec arity {pexp_desc; _} =
-  match pexp_desc with
-  | Pexp_fun (a, _, _, e) ->
-      a :: arity e
-  | Pexp_function cases ->
-      let min_list l1 l2 = if List.length l1 < List.length l2 then l1 else l2 in
-      Nolabel
-      :: List.fold_left
-           (fun acc {pc_rhs; _} -> min_list (arity pc_rhs) acc)
-           [] cases
-  | Pexp_newtype (_, e) ->
-      arity e
-  | Pexp_constraint (e, _) ->
-      arity e
-  | Pexp_poly (e, _) ->
-      arity e
-  | _ ->
-      []
-
 let rec wrap_pyro_caml_method ({pexp_desc; _} as expr) =
   match pexp_desc with
   | Pexp_fun (label, def, pat, e) ->
@@ -179,21 +160,21 @@ let rec name_of_pattern pat =
   | _ ->
       None
 
+let rec translate_pvb_expr expr =
+  match expr.pexp_desc with
+  | Pexp_fun (arg_label, exp_opt, pattern, ({pexp_desc= Pexp_fun _; _} as e'))
+    when e'.pexp_loc.loc_ghost ->
+      let e' = translate_pvb_expr e' in
+      {expr with pexp_desc= Pexp_fun (arg_label, exp_opt, pattern, e')}
+  | Pexp_fun (arg_label, exp_opt, pattern, e') ->
+      let body_with_profiling = wrap_pyro_caml e' in
+      { expr with
+        pexp_desc= Pexp_fun (arg_label, exp_opt, pattern, body_with_profiling)
+      }
+  | _ ->
+      expr
+
 let translate_value_bindings value_binding auto vbs =
-  let rec translate_pvb_expr expr =
-    match expr.pexp_desc with
-    | Pexp_fun (arg_label, exp_opt, pattern, ({pexp_desc= Pexp_fun _; _} as e'))
-      when e'.pexp_loc.loc_ghost ->
-        let e' = translate_pvb_expr e' in
-        {expr with pexp_desc= Pexp_fun (arg_label, exp_opt, pattern, e')}
-    | Pexp_fun (arg_label, exp_opt, pattern, e') ->
-        let body_with_profiling = wrap_pyro_caml e' in
-        { expr with
-          pexp_desc= Pexp_fun (arg_label, exp_opt, pattern, body_with_profiling)
-        }
-    | _ ->
-        expr
-  in
   (* nosemgrep: no-list-map *)
   List.map
     (fun vb ->
@@ -251,25 +232,25 @@ let mapper =
         ; pcf_loc
         ; pcf_attributes
         ; _ } -> (
-          let pyro_profile =
+          let has_attr =
             match
               (* nosemgrep: no-list-filter-map *)
               (List.filter_map (get_payload ppx_identifier) pcf_attributes, auto)
             with
-            | [Some pyro_profile_name], _ ->
-                Some pyro_profile_name
             | [None], _ | _, true ->
                 Some (Constant loc.txt)
             | [], false ->
                 None
-            | _ :: _ :: _, _ ->
+            | [Some _], _ | _ :: _ :: _, _ ->
                 error pcf_loc `Too_many_attributes
           in
-          match pyro_profile with
+          match has_attr with
           | None ->
               super#class_field class_field acc
           | Some _ ->
-              let expr = wrap_pyro_caml (fst (self#expression expr acc)) in
+              let expr =
+                wrap_pyro_caml_method (fst (self#expression expr acc))
+              in
               ( { class_field with
                   pcf_desc= Pcf_method (loc, privat, Cfk_concrete (flag, expr))
                 ; pcf_attributes= remove_attribute ppx_identifier pcf_attributes

@@ -52,6 +52,12 @@ let raw_stack_trace_of_slots slots : raw_stack_trace =
 let raw_stack_trace_of_backtrace bt =
   bt |> slots_of_raw_backtrace |> raw_stack_trace_of_slots
 
+let truncate_top_raw_stack_trace = function
+  | {slots= _ :: slots; domain_id; thread_name} ->
+      Some {slots; domain_id; thread_name}
+  | {slots= []; _} ->
+      None
+
 (*****************************************************************************)
 (* Stack frames *)
 (*****************************************************************************)
@@ -66,8 +72,11 @@ let stack_frame_of_slot (slot : Printexc.backtrace_slot) : frame option =
   | Some loc, Some name ->
       Some {name; filename= loc.filename; line= loc.line_number; inlined}
   | None, Some name ->
+      Printf.eprintf "Warning: missing location for function %s\n" name ;
       Some {name; filename= "<unknown>"; line= 0; inlined}
   | Some loc, None ->
+      Printf.eprintf "Warning: missing function name at %s:%d\n" loc.filename
+        loc.line_number ;
       Some
         { name= "<unknown>"
         ; filename= loc.filename

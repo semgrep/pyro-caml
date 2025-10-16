@@ -12,16 +12,14 @@
 (package
  (name pyro-caml)
  (synopsis "Pyroscope + OCaml = Pyro Caml")
- (depends ocaml mtime)
- (tags
-  ("profiling")))
+ (depends ocaml mtime logs)
+ (tags ("profiling")))
 
 (package
  (name pyro-caml-rust-bindings)
  (synopsis "Pyro Caml bindings for rust")
- (depends ocaml pyro-caml)
- (tags
-  ("profiling")))
+ (depends ocaml pyro-caml conf-rust)
+ (tags ("profiling")))
 
 (package
  (name pyro-caml-ppx)
@@ -29,4 +27,5 @@
  (depends ocaml ppxlib pyro-caml)
  (tags
   ("profiling" "ppx")))
+
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

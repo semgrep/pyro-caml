@@ -13,22 +13,51 @@
  * LICENSE for more details.
  *)
 
-(*****************************************************************************)
-(* Prelude *)
-(*****************************************************************************)
-let max_frames = 15
+let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
+
+module Log = (val Logs.src_log src)
+
+let max_frames = max_int
 
 type event =
   | Point of (int64 * Stack_trace.raw_stack_trace)
   | Enter of Stack_trace.raw_stack_trace
   | Exit of int (* thread id *)
+  | Empty
+
+let truncate_event = function
+  | Point (ts, raw_stack_trace) ->
+      Option.map
+        (fun rst -> Point (ts, rst))
+        Stack_trace.(truncate_top_raw_stack_trace raw_stack_trace)
+  | Enter raw_stack_trace ->
+      Option.map
+        (fun rst -> Enter rst)
+        Stack_trace.(truncate_top_raw_stack_trace raw_stack_trace)
+  | Exit _ as e ->
+      Some e
+  | Empty ->
+      Some Empty
+
+let marshal_event e =
+  let marshaled_event = Marshal.to_bytes e [] in
+  let len = Bytes.length marshaled_event in
+  (marshaled_event, len)
+
+let rec marshal_event_sized size e =
+  let marshaled_event, len = marshal_event e in
+  if len > size then Option.bind (truncate_event e) (marshal_event_sized size)
+  else Some (marshaled_event, len)
+
+let marshaled_empty = marshal_event Empty
 
 type Runtime_events.User.tag += Perf_event_tag
 
 let perf_event_type =
   let encode (bytes : bytes) (e : event) : int =
-    let marshaled = Marshal.to_bytes e [] in
-    let len = Bytes.length marshaled in
+    let marshaled, len =
+      Option.value ~default:marshaled_empty (marshal_event_sized 1024 e)
+    in
     Bytes.blit marshaled 0 bytes 0 len ;
     len
   in
@@ -69,22 +98,26 @@ let emit_point_event ?(repeat = 0) raw_backtrace =
   for _i = 0 to repeat do
     Runtime_events.User.write perf_event event
   done
+[@@inline always]
 
 let record_bt raw_backtrace =
   let now = Mtime_clock.elapsed_ns () in
   if need_to_emit now then (
     Domain.DLS.set last_emitted_timestamp_key (Some now) ;
     emit_point_event raw_backtrace )
+[@@inline always]
 
 let enter raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
   Runtime_events.User.write perf_event (Enter raw_stack_trace)
+[@@inline always]
 
 let exit_ () =
   let tid = (Domain.self () :> int) in
   Runtime_events.User.write perf_event (Exit tid)
+[@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
   let alloc_minor {Gc.Memprof.callstack; _} = record_bt callstack ; None in
@@ -127,7 +160,7 @@ let with_state f =
 let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor_res =
   match cursor_res with
   | Error msg ->
-      Printf.eprintf "No cursor, cannot read events: %s\n%!" msg ;
+      Log.err (fun m -> m "Could not find cursor: %s" msg) ;
       []
   | Ok cursor ->
       let points = ref [] in
@@ -145,8 +178,11 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor_res =
                     in
                     match Stack.pop_opt stack with
                     | None ->
-                        Printf.eprintf
-                          "Warning: pop on empty stack from thread %d\n%!" tid ;
+                        Log.warn (fun m ->
+                            m
+                              "received Exit event but no Entry on stack for \
+                               thread: %d"
+                              tid ) ;
                         ()
                     | Some _ ->
                         Hashtbl.replace state.thread_table tid stack )
@@ -166,7 +202,9 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor_res =
                 (* if it was within the last sampling rate include it *)
                 if Int64.sub now time < sample_rate_ns then
                   let st = Stack_trace.t_of_raw_stack_trace raw_st in
-                  points := st :: !points )
+                  points := st :: !points
+            | Empty ->
+                () )
           callbacks
       in
       let _n_events = Runtime_events.read_poll cursor callbacks max_events in

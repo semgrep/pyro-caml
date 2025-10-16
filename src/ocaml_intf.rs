@@ -24,7 +24,17 @@ impl From<CamlIntfError> for PyroscopeError {
 // Convert from ocaml::Error to OcamlIntfError
 impl From<ocaml::Error> for CamlIntfError {
     fn from(err: ocaml::Error) -> Self {
-        CamlIntfError(format!("Ocaml error: {:?}", err))
+        if let ocaml::Error::Caml(ocaml::CamlError::Exception(exc)) = &err {
+            match unsafe { exc.exception_to_string() } {
+                Ok(s) => CamlIntfError(format!("Ocaml exception: {}", s)),
+                Err(utf8error) => CamlIntfError(format!(
+                    "Ocaml exception (failed to convert to string: {}): {:?}",
+                    utf8error, exc
+                )),
+            }
+        } else {
+            CamlIntfError(format!("Ocaml error: {:?}", err))
+        }
     }
 }
 

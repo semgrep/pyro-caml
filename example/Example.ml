@@ -33,8 +33,12 @@ let () =
   @@ fun () ->
   Printf.printf "Starting loop\n" ;
   flush_all () ;
-  ignore example_func ;
-  ignore example_func3 ;
-  while true do
-    example_func () ; example_func3 () ; example_func () ; example_func3 ()
-  done
+  let[@pyro_profile] do_main_thing () =
+    let i = 0 in
+    while i < 1 do
+      example_func () ; example_func3 () ; example_func () ; example_func3 ()
+    done
+  in
+  let d1 = Domain.spawn (fun () -> do_main_thing ()) in
+  let d2 = Domain.spawn (fun () -> do_main_thing ()) in
+  do_main_thing () ; Domain.join d1 ; Domain.join d2
