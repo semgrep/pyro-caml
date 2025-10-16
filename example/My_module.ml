@@ -22,7 +22,6 @@ type t = {x: int; y: string}
 external comp_and_callback : (unit -> unit) -> unit = "ml_comp_and_callback"
 
 let alloc_thing () =
-  Perf_event.enter Printexc.(get_callstack max_int) ;
   let random_list =
     List.init 1000 (fun _ ->
         {x= Random.int 100000; y= string_of_int (Random.int 100000)} )
@@ -30,23 +29,17 @@ let alloc_thing () =
   let _sorted = List.sort compare random_list in
   List.iter
     (fun x -> if x.x mod 10000 = 1111111111 then assert false)
-    random_list ;
-  Perf_event.exit_ ()
+    random_list
 
 let do_thing () = alloc_thing ()
 
 let do_short_thing () = alloc_thing ()
 
-let sleep time =
-  Perf_event.enter Printexc.(get_callstack max_int) ;
-  Unix.sleepf time ;
-  Perf_event.exit_ ()
+let sleep time = Unix.sleepf time
 
 let do_long_thing () =
-  Perf_event.enter Printexc.(get_callstack max_int) ;
   alloc_thing () ;
   alloc_thing () ;
   alloc_thing () ;
   comp_and_callback Fun.id ;
-  sleep 0.01 ;
-  Perf_event.exit_ ()
+  sleep 0.01

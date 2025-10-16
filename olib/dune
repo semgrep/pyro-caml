@@ -1,5 +1,6 @@
 (executable
- (name register)
- (public_name register)
- (libraries pyro_caml)
+ (package pyro-caml-rust-bindings)
+ (name pyro_caml_rust_bindings)
+ (public_name pyro-caml-rust-bindings)
+ (libraries pyro-caml)
  (modes exe object))

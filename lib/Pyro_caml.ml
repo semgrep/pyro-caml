@@ -16,6 +16,7 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
+let max_frames = 15
 
 type event =
   | Point of (int64 * Stack_trace.raw_stack_trace)
@@ -68,26 +69,22 @@ let emit_point_event ?(repeat = 0) raw_backtrace =
   for _i = 0 to repeat do
     Runtime_events.User.write perf_event event
   done
-[@@inline always]
 
 let record_bt raw_backtrace =
   let now = Mtime_clock.elapsed_ns () in
   if need_to_emit now then (
     Domain.DLS.set last_emitted_timestamp_key (Some now) ;
     emit_point_event raw_backtrace )
-[@@inline always]
 
 let enter raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
   Runtime_events.User.write perf_event (Enter raw_stack_trace)
-[@@inline always]
 
 let exit_ () =
   let tid = (Domain.self () :> int) in
   Runtime_events.User.write perf_event (Exit tid)
-[@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
   let alloc_minor {Gc.Memprof.callstack; _} = record_bt callstack ; None in

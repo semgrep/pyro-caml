@@ -1,0 +1,7 @@
+(library
+ (name ppx_pyro_caml)
+ (public_name pyro-caml-ppx)
+ (private_modules mapper register)
+ (kind ppx_rewriter)
+ (libraries ppxlib)
+ (ppx_runtime_libraries pyro-caml))

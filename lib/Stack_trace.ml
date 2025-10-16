@@ -21,17 +21,6 @@ type slot = Printexc.backtrace_slot
 
 type raw_stack_trace = {slots: slot list; domain_id: int; thread_name: string}
 
-let map_raw_backtrace_slot f slot =
-  let rec map_raw_backtrace_slot' f slot acc =
-    let acc' = f slot :: acc in
-    match Printexc.get_raw_backtrace_next_slot slot with
-    | None ->
-        acc'
-    | Some slot' ->
-        map_raw_backtrace_slot' f slot' acc'
-  in
-  map_raw_backtrace_slot' f slot []
-
 let map_raw_backtrace f bt =
   let length = Printexc.raw_backtrace_length bt in
   let rec aux i acc =
@@ -63,13 +52,6 @@ let raw_stack_trace_of_slots slots : raw_stack_trace =
 let raw_stack_trace_of_backtrace bt =
   bt |> slots_of_raw_backtrace |> raw_stack_trace_of_slots
 
-let get_raw_stack_trace ?max_frames () =
-  let cs = get_callstack ?max_frames () in
-  (* drop first slot since it's always this function *)
-  let cs = List.tl cs in
-  raw_stack_trace_of_slots cs
-[@@inline always]
-
 (*****************************************************************************)
 (* Stack frames *)
 (*****************************************************************************)
@@ -83,6 +65,14 @@ let stack_frame_of_slot (slot : Printexc.backtrace_slot) : frame option =
   match (loc, name) with
   | Some loc, Some name ->
       Some {name; filename= loc.filename; line= loc.line_number; inlined}
+  | None, Some name ->
+      Some {name; filename= "<unknown>"; line= 0; inlined}
+  | Some loc, None ->
+      Some
+        { name= "<unknown>"
+        ; filename= loc.filename
+        ; line= loc.line_number
+        ; inlined }
   | __else__ ->
       None
 

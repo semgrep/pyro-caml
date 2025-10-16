@@ -13,10 +13,15 @@
  * LICENSE for more details.
  *)
 
-let read_poll cursor = Perf_event.read_poll cursor
+(*****************************************************************************)
+(* Prelude *)
+(*****************************************************************************)
 
-let create_cursor = Perf_event.create_cursor
+let auto = Mapper.auto
+
+open Ppxlib
 
 let () =
-  Callback.register "read_poll_ml" read_poll ;
-  Callback.register "create_cursor_ml" create_cursor
+  Driver.add_arg "--auto" (Set auto) ~doc:"measure all top-level functions." ;
+  let impl str = (Mapper.toplevel_mapper !auto)#structure str in
+  Ppxlib.Driver.register_transformation "pyro_caml" ~impl

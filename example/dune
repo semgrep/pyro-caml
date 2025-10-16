@@ -1,9 +1,12 @@
 (executable
+ (package pyro-caml-ppx)
  (name example)
  (public_name example)
- (libraries pyro_caml unix)
+ (libraries pyro-caml pyro-caml-ppx unix)
  (modes exe)
-(foreign_stubs
+ (preprocess
+  (pps ppx_pyro_caml --auto))
+ (foreign_stubs
   (language c)
   (names example_stubs)
   (flags :standard)))

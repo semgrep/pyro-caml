@@ -5,22 +5,28 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github semgrep/pyro_caml))
 
-(authors "Author Name <author@example.com>")
-
-(maintainers "Maintainer Name <maintainer@example.com>")
-
-(license LICENSE)
-
-(documentation https://url/to/documentation)
+(authors "Austin Theriault <austin@cutedogs.org>")
 
 (package
- (name pyro_caml)
- (synopsis "A short synopsis")
- (description "A longer description")
+ (name pyro-caml)
+ (synopsis "Pyroscope + OCaml = Pyro Caml")
  (depends ocaml mtime)
  (tags
-  ("add topics" "to describe" your project)))
+  ("profiling")))
 
+(package
+ (name pyro-caml-rust-bindings)
+ (synopsis "Pyro Caml bindings for rust")
+ (depends ocaml pyro-caml)
+ (tags
+  ("profiling")))
+
+(package
+ (name pyro-caml-ppx)
+ (synopsis "Pyro Caml PPX")
+ (depends ocaml ppxlib pyro-caml)
+ (tags
+  ("profiling" "ppx")))
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
