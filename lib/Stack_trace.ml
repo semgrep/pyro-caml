@@ -21,8 +21,11 @@ type slot = Printexc.backtrace_slot
 
 type raw_stack_trace = {slots: slot list; domain_id: int; thread_name: string}
 
-let map_raw_backtrace f bt =
-  let length = Printexc.raw_backtrace_length bt in
+let map_raw_backtrace ?max_frames f bt =
+  let raw_length = Printexc.raw_backtrace_length bt in
+  let length =
+    match max_frames with Some mf -> min mf raw_length | None -> raw_length
+  in
   let rec aux i acc =
     if i < length then
       let slot = Printexc.get_raw_backtrace_slot bt i in
@@ -32,8 +35,8 @@ let map_raw_backtrace f bt =
   in
   aux 0 []
 
-let slots_of_raw_backtrace =
-  map_raw_backtrace Printexc.convert_raw_backtrace_slot
+let slots_of_raw_backtrace ?max_frames bt =
+  map_raw_backtrace Printexc.convert_raw_backtrace_slot ?max_frames bt
 
 let get_callstack ?(max_frames = max_int) () =
   Printexc.get_callstack max_frames |> slots_of_raw_backtrace |> List.tl
@@ -49,8 +52,8 @@ let raw_stack_trace_of_slots slots : raw_stack_trace =
   let name = if Domain.is_main_domain () then "main" else string_of_int did in
   {slots; domain_id= did; thread_name= name}
 
-let raw_stack_trace_of_backtrace bt =
-  bt |> slots_of_raw_backtrace |> raw_stack_trace_of_slots
+let raw_stack_trace_of_backtrace ?max_frames bt =
+  bt |> slots_of_raw_backtrace ?max_frames |> raw_stack_trace_of_slots
 
 let truncate_top_raw_stack_trace = function
   | {slots= _ :: slots; domain_id; thread_name} ->

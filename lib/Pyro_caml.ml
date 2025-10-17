@@ -17,7 +17,7 @@ let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
 
 module Log = (val Logs.src_log src)
 
-let max_frames = max_int
+let max_frames = 20
 
 type event =
   | Point of (int64 * Stack_trace.raw_stack_trace)
@@ -97,7 +97,7 @@ let need_to_emit (now : int64) =
 
 let emit_point_event raw_backtrace =
   let raw_stack_trace =
-    Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
+    Stack_trace.raw_stack_trace_of_backtrace ~max_frames raw_backtrace
   in
   let event = Point (Mtime_clock.now_ns (), raw_stack_trace) in
   Runtime_events.User.write perf_event event
@@ -132,7 +132,7 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
 
 let with_memprof_sampler f =
   let memprof =
-    Gc.Memprof.start ~callstack_size:15 ~sampling_rate:1e-4 tracker
+    Gc.Memprof.start ~callstack_size:max_frames ~sampling_rate:1e-4 tracker
   in
   Fun.protect
     ~finally:(fun () -> Gc.Memprof.stop () ; Gc.Memprof.discard memprof)
