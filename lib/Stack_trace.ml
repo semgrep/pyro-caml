@@ -19,47 +19,13 @@
 
 type slot = Printexc.backtrace_slot
 
-type raw_stack_trace = {slots: slot list; domain_id: int; thread_name: string}
+type raw_stack_trace = {slots: slot array; domain_id: int; thread_name: string}
 
-let map_raw_backtrace ?max_frames f bt =
-  let raw_length = Printexc.raw_backtrace_length bt in
-  let length =
-    match max_frames with Some mf -> min mf raw_length | None -> raw_length
-  in
-  let rec aux i acc =
-    if i < length then
-      let slot = Printexc.get_raw_backtrace_slot bt i in
-      let slot = f slot in
-      aux (i + 1) (slot :: acc)
-    else List.rev acc
-  in
-  aux 0 []
-
-let slots_of_raw_backtrace ?max_frames bt =
-  map_raw_backtrace Printexc.convert_raw_backtrace_slot ?max_frames bt
-
-let get_callstack ?(max_frames = max_int) () =
-  Printexc.get_callstack max_frames |> slots_of_raw_backtrace |> List.tl
-[@@inline always]
-
-let print_callstack ?max_frames () =
-  get_callstack ?max_frames ()
-  |> List.mapi Printexc.Slot.format
-  |> List.filter_map Fun.id |> String.concat "\n" |> print_endline
-
-let raw_stack_trace_of_slots slots : raw_stack_trace =
+let raw_stack_trace_of_backtrace bt : raw_stack_trace =
   let did = (Domain.self () :> int) in
   let name = if Domain.is_main_domain () then "main" else string_of_int did in
+  let slots = Option.value ~default:[||] Printexc.(backtrace_slots bt) in
   {slots; domain_id= did; thread_name= name}
-
-let raw_stack_trace_of_backtrace ?max_frames bt =
-  bt |> slots_of_raw_backtrace ?max_frames |> raw_stack_trace_of_slots
-
-let truncate_top_raw_stack_trace = function
-  | {slots= _ :: slots; domain_id; thread_name} ->
-      Some {slots; domain_id; thread_name}
-  | {slots= []; _} ->
-      None
 
 (*****************************************************************************)
 (* Stack frames *)
@@ -100,7 +66,7 @@ let stack_frames_of_slots slots =
 type t = {frames: frame list; thread_id: int; thread_name: string}
 
 let t_of_raw_stack_trace raw_stack_trace =
-  let frames = stack_frames_of_slots raw_stack_trace.slots in
+  let frames = stack_frames_of_slots (Array.to_list raw_stack_trace.slots) in
   { frames
   ; thread_id= raw_stack_trace.domain_id
   ; thread_name= raw_stack_trace.thread_name }
