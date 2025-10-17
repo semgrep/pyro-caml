@@ -10,6 +10,7 @@ depends: [
   "ocaml"
   "mtime"
   "logs"
+  "digestif"
   "odoc" {with-doc}
 ]
 build: [

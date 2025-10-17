@@ -13,60 +13,19 @@
  * LICENSE for more details.
  *)
 
+open Event
+
+type event = Event.t
+
 let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
 
 module Log = (val Logs.src_log src)
 
-let max_frames = 100
+let max_frames = max_int
 
-type event =
-  | Point of (int64 * Stack_trace.raw_stack_trace)
-  | Enter of Stack_trace.raw_stack_trace
-  | Exit of int (* thread id *)
-  | Empty
-  | Large of string
-
-let tmp_dir =
-  let tmp_dir = Sys.getenv_opt "PYRO_TMP_DIR" |> Option.value ~default:"/tmp" in
-  let path = Filename.concat tmp_dir "pyro_caml" in
-  if not (Sys.file_exists path) then Unix.mkdir path 0o700 ;
-  path
-
-let temp_file () =
-  let file_name = Random.bits () |> string_of_int in
-  Filename.concat tmp_dir file_name
-
-let marshal_event e =
-  let marshaled_event = Marshal.to_bytes e [] in
-  let len = Bytes.length marshaled_event in
-  if len <= 1024 then (marshaled_event, len)
-  else
-    let path = temp_file () in
-    let oc = open_out_bin path in
-    Marshal.to_channel oc e [] ;
-    close_out oc ;
-    let large_event = Large path in
-    let marshaled_large_event = Marshal.to_bytes large_event [] in
-    let large_len = Bytes.length marshaled_large_event in
-    (marshaled_large_event, large_len)
-
-let marshaled_empty = marshal_event Empty
-
-type Runtime_events.User.tag += Perf_event_tag
-
-let perf_event_type =
-  let encode (bytes : bytes) (e : event) : int =
-    let marshaled, len = marshal_event e in
-    Bytes.blit marshaled 0 bytes 0 len ;
-    len
-  in
-  let decode (bytes : bytes) (_len : int) : event =
-    Marshal.from_bytes bytes 0
-  in
-  Runtime_events.Type.register ~encode ~decode
-
-let perf_event =
-  Runtime_events.User.register "Perf_event" Perf_event_tag perf_event_type
+type child_state =
+  { thread_table: (int, Stack_trace.t Stack.t) Hashtbl.t
+  ; event_buffer: event_buffer }
 
 (* Per second *)
 let sample_rate =
@@ -94,7 +53,7 @@ let emit_point_event raw_backtrace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
   let event = Point (Mtime_clock.now_ns (), raw_stack_trace) in
-  Runtime_events.User.write perf_event event
+  emit_event event
 [@@inline always]
 
 let record_bt raw_backtrace =
@@ -108,12 +67,12 @@ let enter raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
-  Runtime_events.User.write perf_event (Enter raw_stack_trace)
+  emit_event (Enter raw_stack_trace)
 [@@inline always]
 
 let exit_ () =
   let tid = (Domain.self () :> int) in
-  Runtime_events.User.write perf_event (Exit tid)
+  emit_event (Exit tid)
 [@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
@@ -132,8 +91,6 @@ let with_memprof_sampler f =
     ~finally:(fun () -> Gc.Memprof.stop () ; Gc.Memprof.discard memprof)
     f
 
-type child_state = {thread_table: (int, Stack_trace.t Stack.t) Hashtbl.t}
-
 let samples_of_child_state (child_state : child_state) =
   Hashtbl.fold
     (fun _tid stack acc ->
@@ -145,53 +102,46 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 let empty_callbacks = Runtime_events.Callbacks.create ()
 
-let state = (Mutex.create (), {thread_table= Hashtbl.create 16})
+let state =
+  ( Mutex.create ()
+  , {thread_table= Hashtbl.create 16; event_buffer= Hashtbl.create 16} )
 
 let with_state f =
   let m, s = state in
   Mutex.lock m ;
   Fun.protect ~finally:(fun () -> Mutex.unlock m) (fun () -> f s)
 
-let rec process_event points = function
-  | Exit tid ->
+let process_event state points = function
+  | Exit tid -> (
       (* pop st from thread stack *)
-      with_state (fun state ->
-          let stack =
-            Hashtbl.find_opt state.thread_table tid
-            |> Option.value ~default:(Stack.create ())
-          in
-          match Stack.pop_opt stack with
-          | None ->
-              Log.warn (fun m ->
-                  m "received Exit event but no Entry on stack for thread: %d"
-                    tid ) ;
-              ()
-          | Some _ ->
-              Hashtbl.replace state.thread_table tid stack )
+      let stack =
+        Hashtbl.find_opt state.thread_table tid
+        |> Option.value ~default:(Stack.create ())
+      in
+      match Stack.pop_opt stack with
+      | None ->
+          Log.warn (fun m ->
+              m "received Exit event but no Entry on stack for thread: %d" tid ) ;
+          ()
+      | Some _ ->
+          Hashtbl.replace state.thread_table tid stack )
   | Enter e ->
       let st = Stack_trace.t_of_raw_stack_trace e in
       let tid = st.thread_id in
       (* push new st on thread stack *)
-      with_state (fun state ->
-          let stack =
-            Hashtbl.find_opt state.thread_table tid
-            |> Option.value ~default:(Stack.create ())
-          in
-          Stack.push st stack ;
-          Hashtbl.replace state.thread_table tid stack )
+      let stack =
+        Hashtbl.find_opt state.thread_table tid
+        |> Option.value ~default:(Stack.create ())
+      in
+      Stack.push st stack ;
+      Hashtbl.replace state.thread_table tid stack
   | Point (time, raw_st) ->
       let now = Mtime_clock.now_ns () in
       (* if it was within the last sampling rate include it *)
       if Int64.sub now time < sample_rate_ns then
         let st = Stack_trace.t_of_raw_stack_trace raw_st in
         points := st :: !points
-  | Large path ->
-      let ic = open_in_bin path in
-      let large_event : event = Marshal.from_channel ic in
-      close_in ic ;
-      Sys.remove path ;
-      process_event points large_event
-  | Empty ->
+  | Partial _ ->
       ()
 
 let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
@@ -199,7 +149,11 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
   let callbacks =
     Runtime_events.Callbacks.add_user_event perf_event_type
       (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
-           _event_t (e : event) -> process_event points e )
+           _event_t (e : marshaled) ->
+        with_state (fun state ->
+            e
+            |> event_of_perf_event state.event_buffer
+            |> process_event state points ) )
       callbacks
   in
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
