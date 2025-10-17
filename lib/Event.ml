@@ -20,7 +20,7 @@ module Hash = Digest.MD5
 
 type t =
   | Point of (int64 * Stack_trace.raw_stack_trace)
-  | Enter of Stack_trace.raw_stack_trace
+  | Enter of (int64 * Stack_trace.raw_stack_trace)
   | Exit of int (* thread id *)
   | Partial of {id: Hash.t; bytes: Bytes.t; part: int; part_count: int}
 

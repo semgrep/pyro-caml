@@ -5,7 +5,7 @@
  (libraries pyro-caml pyro-caml-ppx unix)
  (modes exe)
  (preprocess
-  (pps ppx_pyro_caml --auto))
+  (pps ppx_pyro_caml))
  (foreign_stubs
   (language c)
   (names example_stubs)

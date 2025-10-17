@@ -38,7 +38,6 @@ let alloc_thing () =
     (fun x ->
       if f x.x (String.length x.y) 100 mod 10 = 10000000000 then assert false )
     random_list
-[@@pyro_profile]
 
 class stack_of_ints =
   object (_self)

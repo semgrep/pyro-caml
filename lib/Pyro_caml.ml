@@ -36,18 +36,6 @@ let sample_rate_ms = 1000.0 /. float_of_int sample_rate
 
 let sample_rate_ns = Int64.of_float (sample_rate_ms *. 1_000_000.0)
 
-let last_emitted_timestamp_key : int64 option Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> None)
-
-let need_to_emit (now : int64) =
-  match Domain.DLS.get last_emitted_timestamp_key with
-  | None ->
-      true
-  | Some last_emitted_timestamp ->
-      let elapsed = Int64.sub now last_emitted_timestamp in
-      let elapsed_ms = Int64.div elapsed 1_000_000L |> Int64.to_float in
-      elapsed_ms >= sample_rate_ms
-
 let emit_point_event raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
@@ -56,18 +44,11 @@ let emit_point_event raw_backtrace =
   emit_event event
 [@@inline always]
 
-let record_bt raw_backtrace =
-  let now = Mtime_clock.elapsed_ns () in
-  if need_to_emit now then (
-    Domain.DLS.set last_emitted_timestamp_key (Some now) ;
-    emit_point_event raw_backtrace )
-[@@inline always]
-
 let enter raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
-  emit_event (Enter raw_stack_trace)
+  emit_event (Enter (Mtime_clock.now_ns (), raw_stack_trace))
 [@@inline always]
 
 let exit_ () =
@@ -76,8 +57,12 @@ let exit_ () =
 [@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
-  let alloc_minor {Gc.Memprof.callstack; _} = record_bt callstack ; None in
-  let alloc_major {Gc.Memprof.callstack; _} = record_bt callstack ; None in
+  let alloc_minor {Gc.Memprof.callstack; _} =
+    emit_point_event callstack ; None
+  in
+  let alloc_major {Gc.Memprof.callstack; _} =
+    emit_point_event callstack ; None
+  in
   let promote () = None in
   let dealloc_minor = Fun.id in
   let dealloc_major = Fun.id in
@@ -111,7 +96,7 @@ let with_state f =
   Mutex.lock m ;
   Fun.protect ~finally:(fun () -> Mutex.unlock m) (fun () -> f s)
 
-let process_event state points = function
+let process_event state sample_points = function
   | Exit tid -> (
       (* pop st from thread stack *)
       let stack =
@@ -125,7 +110,7 @@ let process_event state points = function
           ()
       | Some _ ->
           Hashtbl.replace state.thread_table tid stack )
-  | Enter e ->
+  | Enter (time, e) ->
       let st = Stack_trace.t_of_raw_stack_trace e in
       let tid = st.thread_id in
       (* push new st on thread stack *)
@@ -134,18 +119,20 @@ let process_event state points = function
         |> Option.value ~default:(Stack.create ())
       in
       Stack.push st stack ;
-      Hashtbl.replace state.thread_table tid stack
+      Hashtbl.replace state.thread_table tid stack ;
+      sample_points := (time, st) :: !sample_points
   | Point (time, raw_st) ->
       let now = Mtime_clock.now_ns () in
       (* if it was within the last sampling rate include it *)
       if Int64.sub now time < sample_rate_ns then
         let st = Stack_trace.t_of_raw_stack_trace raw_st in
-        points := st :: !points
+        sample_points := (time, st) :: !sample_points
   | Partial _ ->
       ()
 
 let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
-  let points = ref [] in
+  let now = Mtime_clock.now_ns () in
+  let sample_points = ref [] in
   let callbacks =
     Runtime_events.Callbacks.add_user_event perf_event_type
       (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
@@ -153,15 +140,23 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
         with_state (fun state ->
             e
             |> event_of_perf_event state.event_buffer
-            |> process_event state points ) )
+            |> process_event state sample_points ) )
       callbacks
   in
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
-  let points = !points in
-  let point_thids = List.map (fun st -> st.Stack_trace.thread_id) points in
+  let sample_points =
+    !sample_points
+    |> List.filter_map (fun (time, _st) ->
+           if Int64.sub now time < sample_rate_ns then Some _st else None )
+    |> List.sort_uniq (fun a b ->
+           Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id )
+  in
+  let point_thids =
+    List.map (fun st -> st.Stack_trace.thread_id) sample_points
+  in
   let state_samples =
     with_state (fun state -> samples_of_child_state state)
     |> List.filter (fun st ->
            not (List.mem st.Stack_trace.thread_id point_thids) )
   in
-  points @ state_samples
+  sample_points @ state_samples
