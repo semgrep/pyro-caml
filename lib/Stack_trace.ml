@@ -35,7 +35,7 @@ let map_raw_backtrace f bt =
 let slots_of_raw_backtrace =
   map_raw_backtrace Printexc.convert_raw_backtrace_slot
 
-let get_callstack ?(max_frames = 1000) () =
+let get_callstack ?(max_frames = max_int) () =
   Printexc.get_callstack max_frames |> slots_of_raw_backtrace |> List.tl
 [@@inline always]
 

@@ -2,4 +2,6 @@
  (name pyro_caml)
  (public_name pyro-caml)
  (wrapped false)
- (libraries runtime_events unix mtime.clock logs))
+ (libraries runtime_events unix mtime.clock logs)
+ (instrumentation.backend
+  (ppx pyro-caml-ppx)))

@@ -56,7 +56,12 @@ type Runtime_events.User.tag += Perf_event_tag
 let perf_event_type =
   let encode (bytes : bytes) (e : event) : int =
     let marshaled, len =
-      Option.value ~default:marshaled_empty (marshal_event_sized 1024 e)
+      match marshal_event_sized 1024 e with
+      | Some x ->
+          x
+      | None ->
+          Log.err (fun m -> m "Could not marshal event, sending empty") ;
+          marshaled_empty
     in
     Bytes.blit marshaled 0 bytes 0 len ;
     len
