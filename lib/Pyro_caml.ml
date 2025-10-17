@@ -95,14 +95,12 @@ let need_to_emit (now : int64) =
       let elapsed_ms = Int64.div elapsed 1_000_000L |> Int64.to_float in
       elapsed_ms >= sample_rate_ms
 
-let emit_point_event ?(repeat = 0) raw_backtrace =
+let emit_point_event raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
   let event = Point (Mtime_clock.now_ns (), raw_stack_trace) in
-  for _i = 0 to repeat do
-    Runtime_events.User.write perf_event event
-  done
+  Runtime_events.User.write perf_event event
 [@@inline always]
 
 let record_bt raw_backtrace =
@@ -149,9 +147,7 @@ let samples_of_child_state (child_state : child_state) =
       sts @ acc )
     child_state.thread_table []
 
-let create_cursor path pid =
-  try Ok (Runtime_events.create_cursor (Some (path, pid)))
-  with Failure msg -> Error (Printf.sprintf "Failed to create cursor: %s" msg)
+let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 let empty_callbacks = Runtime_events.Callbacks.create ()
 
@@ -162,62 +158,57 @@ let with_state f =
   Mutex.lock m ;
   Fun.protect ~finally:(fun () -> Mutex.unlock m) (fun () -> f s)
 
-let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor_res =
-  match cursor_res with
-  | Error msg ->
-      Log.err (fun m -> m "Could not find cursor: %s" msg) ;
-      []
-  | Ok cursor ->
-      let points = ref [] in
-      let callbacks =
-        Runtime_events.Callbacks.add_user_event perf_event_type
-          (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
-               _event_t (e : event) ->
-            match e with
-            | Exit tid ->
-                (* pop st from thread stack *)
-                with_state (fun state ->
-                    let stack =
-                      Hashtbl.find_opt state.thread_table tid
-                      |> Option.value ~default:(Stack.create ())
-                    in
-                    match Stack.pop_opt stack with
-                    | None ->
-                        Log.warn (fun m ->
-                            m
-                              "received Exit event but no Entry on stack for \
-                               thread: %d"
-                              tid ) ;
-                        ()
-                    | Some _ ->
-                        Hashtbl.replace state.thread_table tid stack )
-            | Enter e ->
-                let st = Stack_trace.t_of_raw_stack_trace e in
-                let tid = st.thread_id in
-                (* push new st on thread stack *)
-                with_state (fun state ->
-                    let stack =
-                      Hashtbl.find_opt state.thread_table tid
-                      |> Option.value ~default:(Stack.create ())
-                    in
-                    Stack.push st stack ;
+let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
+  let points = ref [] in
+  let callbacks =
+    Runtime_events.Callbacks.add_user_event perf_event_type
+      (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
+           _event_t (e : event) ->
+        match e with
+        | Exit tid ->
+            (* pop st from thread stack *)
+            with_state (fun state ->
+                let stack =
+                  Hashtbl.find_opt state.thread_table tid
+                  |> Option.value ~default:(Stack.create ())
+                in
+                match Stack.pop_opt stack with
+                | None ->
+                    Log.warn (fun m ->
+                        m
+                          "received Exit event but no Entry on stack for \
+                           thread: %d"
+                          tid ) ;
+                    ()
+                | Some _ ->
                     Hashtbl.replace state.thread_table tid stack )
-            | Point (time, raw_st) ->
-                let now = Mtime_clock.now_ns () in
-                (* if it was within the last sampling rate include it *)
-                if Int64.sub now time < sample_rate_ns then
-                  let st = Stack_trace.t_of_raw_stack_trace raw_st in
-                  points := st :: !points
-            | Empty ->
-                () )
-          callbacks
-      in
-      let _n_events = Runtime_events.read_poll cursor callbacks max_events in
-      let points = !points in
-      let point_thids = List.map (fun st -> st.Stack_trace.thread_id) points in
-      let state_samples =
-        with_state (fun state -> samples_of_child_state state)
-        |> List.filter (fun st ->
-               not (List.mem st.Stack_trace.thread_id point_thids) )
-      in
-      points @ state_samples
+        | Enter e ->
+            let st = Stack_trace.t_of_raw_stack_trace e in
+            let tid = st.thread_id in
+            (* push new st on thread stack *)
+            with_state (fun state ->
+                let stack =
+                  Hashtbl.find_opt state.thread_table tid
+                  |> Option.value ~default:(Stack.create ())
+                in
+                Stack.push st stack ;
+                Hashtbl.replace state.thread_table tid stack )
+        | Point (time, raw_st) ->
+            let now = Mtime_clock.now_ns () in
+            (* if it was within the last sampling rate include it *)
+            if Int64.sub now time < sample_rate_ns then
+              let st = Stack_trace.t_of_raw_stack_trace raw_st in
+              points := st :: !points
+        | Empty ->
+            () )
+      callbacks
+  in
+  let _n_events = Runtime_events.read_poll cursor callbacks max_events in
+  let points = !points in
+  let point_thids = List.map (fun st -> st.Stack_trace.thread_id) points in
+  let state_samples =
+    with_state (fun state -> samples_of_child_state state)
+    |> List.filter (fun st ->
+           not (List.mem st.Stack_trace.thread_id point_thids) )
+  in
+  points @ state_samples
