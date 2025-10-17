@@ -27,15 +27,6 @@ type child_state =
   { thread_table: (int, Stack_trace.t Stack.t) Hashtbl.t
   ; event_buffer: event_buffer }
 
-(* Per second *)
-let sample_rate =
-  Sys.getenv_opt "PERF_EVENT_SAMPLE_RATE"
-  |> Option.map int_of_string |> Option.value ~default:100
-
-let sample_rate_ms = 1000.0 /. float_of_int sample_rate
-
-let sample_rate_ns = Int64.of_float (sample_rate_ms *. 1_000_000.0)
-
 let emit_point_event raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
@@ -122,15 +113,14 @@ let process_event state sample_points = function
       Hashtbl.replace state.thread_table tid stack ;
       sample_points := (time, st) :: !sample_points
   | Point (time, raw_st) ->
-      let now = Mtime_clock.now_ns () in
-      (* if it was within the last sampling rate include it *)
-      if Int64.sub now time < sample_rate_ns then
-        let st = Stack_trace.t_of_raw_stack_trace raw_st in
-        sample_points := (time, st) :: !sample_points
+      let st = Stack_trace.t_of_raw_stack_trace raw_st in
+      sample_points := (time, st) :: !sample_points
   | Partial _ ->
       ()
 
-let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
+let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
+    interval =
+  let interval_ns = Int64.of_float (interval *. 1e6) in
   let now = Mtime_clock.now_ns () in
   let sample_points = ref [] in
   let callbacks =
@@ -146,8 +136,8 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor =
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
   let sample_points =
     !sample_points
-    |> List.filter_map (fun (time, _st) ->
-           if Int64.sub now time < sample_rate_ns then Some _st else None )
+    |> List.filter_map (fun (time, st) ->
+           if Int64.sub now time < interval_ns then Some st else None )
     |> List.sort_uniq (fun a b ->
            Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id )
   in

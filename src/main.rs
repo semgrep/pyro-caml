@@ -13,7 +13,6 @@ mod ocaml_intf;
 
 const OCAML_RUNTIME_EVENTS_START: &str = "OCAML_RUNTIME_EVENTS_START";
 const OCAML_RUNTIME_EVENTS_DIR: &str = "OCAML_RUNTIME_EVENTS_DIR";
-const PYRO_CAML_SAMPLE_RATE: &str = "PYRO_CAML_SAMPLE_RATE";
 const LOG_TAG: &str = "Pyro_caml::main";
 
 #[derive(Parser)]
@@ -90,7 +89,6 @@ fn main() {
         .args(args)
         .env(OCAML_RUNTIME_EVENTS_START, "1")
         .env(OCAML_RUNTIME_EVENTS_DIR, event_directory.to_str().unwrap())
-        .env(PYRO_CAML_SAMPLE_RATE, sample_rate.to_string())
         .spawn()
         .expect("failed to execute process");
     // wait for child process to start

@@ -13,7 +13,7 @@
  * LICENSE for more details.
  *)
 
-let read_poll cursor = Pyro_caml.read_poll cursor
+let read_poll cursor interval = Pyro_caml.read_poll cursor interval
 
 let create_cursor = Pyro_caml.create_cursor
 

@@ -57,6 +57,10 @@ impl CamlSpyConfig {
             .clone()
         })
     }
+
+    fn sample_interval_ms(&self) -> f64 {
+        1000.0 / self.sample_rate as f64
+    }
 }
 
 #[derive(Debug)]
@@ -124,21 +128,17 @@ impl Backend for CamlSpy {
             while running.load(Ordering::Relaxed) {
                 log::trace!(target:LOG_TAG, "sampling...");
                 let backend_config = backend_config.lock()?;
-                let mut stack_frames = OCAML_GC.with_borrow(|gc| {
-                    ocaml_intf::read_poll(
-                        gc,
-                        config.acquire_cursor(),
-                        backend_config.deref(),
-                        config.pid,
-                    )
-                });
-                let mut stack_frames = match stack_frames {
-                    Ok(frames) => frames,
-                    Err(e) => {
-                        log::error!(target:LOG_TAG, "failed to read poll: {}", e);
-                        vec![]
-                    }
-                };
+                let mut stack_frames: Vec<StackTrace> = OCAML_GC
+                    .with_borrow(|gc| {
+                        ocaml_intf::read_poll(
+                            gc,
+                            config.acquire_cursor(),
+                            config.sample_interval_ms(),
+                        )
+                    })?
+                    .into_iter()
+                    .map(|st| st.into_stack_trace(backend_config.deref(), config.pid))
+                    .collect();
 
                 if stack_frames.is_empty() {
                     // push an empty stack_trace to indicate idle
@@ -146,11 +146,11 @@ impl Backend for CamlSpy {
                     stack_frames.push(empty_stack_trace.clone());
                 }
 
-                log::trace!(target:LOG_TAG, "got {} stack frames", stack_frames.clone().len());
                 for st in stack_frames.into_iter() {
                     let stack_trace = st + &ruleset.lock()?.clone();
                     buffer.lock()?.record(stack_trace).unwrap();
                 }
+
                 thread::sleep(std::time::Duration::from_millis(
                     1000 / config.sample_rate as u64,
                 ));
