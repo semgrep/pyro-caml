@@ -1,6 +1,10 @@
 use std::{path::PathBuf, thread, time::Duration};
 
 use clap::Parser;
+use nix::{
+    sys::signal::{self, Signal},
+    unistd::Pid,
+};
 use pyroscope::{
     backend::{BackendConfig, BackendImpl},
     pyroscope::{PyroscopeAgentBuilder, ReportEncoding},
@@ -132,6 +136,7 @@ fn main() {
         .env(OCAML_RUNTIME_EVENTS_DIR, event_directory.to_str().unwrap())
         .spawn()
         .expect("failed to execute process");
+    let child_id = child.id();
     // wait for child process to start
 
     let camlspy_config = CamlSpyConfig {
@@ -146,6 +151,15 @@ fn main() {
     agent_builder = agent_builder.backend(backend);
     let agent = agent_builder.build().unwrap();
     let agent_running = agent.start().unwrap();
+
+    ctrlc::set_handler(move || {
+        log::info!(target: LOG_TAG, "Received Ctrl-C, shutting down...");
+
+        signal::kill(Pid::from_raw(child_id.clone() as i32), Signal::SIGTERM)
+            .expect("Failed to send SIGTERM to child process");
+    })
+    .expect("Error setting Ctrl-C handler");
+
     let ecode = child.wait().expect("failed to wait on child");
     match ecode.success() {
         true => log::info!(target: LOG_TAG, "Process exited successfully"),
@@ -161,4 +175,6 @@ fn main() {
     // sleep for 1 seconds to allow the agent to flush data
     thread::sleep(Duration::from_secs(1));
     agent_running.stop().unwrap();
+    // exit with the same code as the child process
+    std::process::exit(ecode.code().unwrap_or_default());
 }
