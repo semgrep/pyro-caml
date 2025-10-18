@@ -110,7 +110,7 @@ let enter_pyro_caml loc =
   let var e = var e loc in
   let enter = "Pyro_caml.enter" in
   let record_cs = "Printexc.get_callstack" in
-  let max_int = "Pyro_caml.max_frames" in
+  let max_int = "max_int" in
   Exp.apply (var enter)
     [(Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)])]
 

@@ -21,8 +21,6 @@ let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
 
 module Log = (val Logs.src_log src)
 
-let max_frames = max_int
-
 type child_state =
   { thread_table: (int, Stack_trace.t Stack.t) Hashtbl.t
   ; event_buffer: event_buffer }
@@ -59,10 +57,8 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
   let dealloc_major = Fun.id in
   {Gc.Memprof.alloc_minor; alloc_major; promote; dealloc_minor; dealloc_major}
 
-let with_memprof_sampler f =
-  let memprof =
-    Gc.Memprof.start ~callstack_size:max_frames ~sampling_rate:1e-4 tracker
-  in
+let with_memprof_sampler ?(sampling_rate = 1e-6) f =
+  let memprof = Gc.Memprof.start ~sampling_rate tracker in
   Fun.protect
     ~finally:(fun () -> Gc.Memprof.stop () ; Gc.Memprof.discard memprof)
     f
@@ -78,14 +74,7 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 let empty_callbacks = Runtime_events.Callbacks.create ()
 
-let state =
-  ( Mutex.create ()
-  , {thread_table= Hashtbl.create 16; event_buffer= Hashtbl.create 16} )
-
-let with_state f =
-  let m, s = state in
-  Mutex.lock m ;
-  Fun.protect ~finally:(fun () -> Mutex.unlock m) (fun () -> f s)
+let state = {thread_table= Hashtbl.create 16; event_buffer= Hashtbl.create 16}
 
 let process_event state sample_points = function
   | Exit tid -> (
@@ -127,10 +116,9 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
     Runtime_events.Callbacks.add_user_event perf_event_type
       (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
            _event_t (e : marshaled) ->
-        with_state (fun state ->
-            e
-            |> event_of_perf_event state.event_buffer
-            |> process_event state sample_points ) )
+        e
+        |> event_of_perf_event state.event_buffer
+        |> process_event state sample_points )
       callbacks
   in
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
@@ -145,7 +133,7 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
     List.map (fun st -> st.Stack_trace.thread_id) sample_points
   in
   let state_samples =
-    with_state (fun state -> samples_of_child_state state)
+    samples_of_child_state state
     |> List.filter (fun st ->
            not (List.mem st.Stack_trace.thread_id point_thids) )
   in

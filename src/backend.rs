@@ -34,7 +34,7 @@ pub struct CamlSpyConfig {
 }
 
 impl CamlSpyConfig {
-    fn get_event_file_path(&self) -> PathBuf {
+    pub fn get_event_file_path(&self) -> PathBuf {
         // file is always pid.events
         let mut path = self.event_directory.clone();
         path.push(format!("{}.events", self.pid));
@@ -155,6 +155,7 @@ impl Backend for CamlSpy {
                     1000 / config.sample_rate as u64,
                 ));
             }
+            log::debug!(target:LOG_TAG, "sampler thread exiting");
             Ok(())
         });
         self.sampler_thread = Some(sampler);
@@ -162,6 +163,7 @@ impl Backend for CamlSpy {
     }
 
     fn shutdown(self: Box<Self>) -> Result<()> {
+        log::trace!(target:LOG_TAG, "Shutting down sampler thread");
         self.running.store(false, Ordering::Relaxed);
         self.sampler_thread
             .ok_or_else(|| PyroscopeError::new("CamlSpy: Failed to unwrap sampler thread"))?

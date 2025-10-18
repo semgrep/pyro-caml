@@ -1,10 +1,11 @@
-use std::{env, path::PathBuf, thread, time::Duration};
+use std::{path::PathBuf, thread, time::Duration};
 
 use clap::Parser;
 use pyroscope::{
     backend::{BackendConfig, BackendImpl},
     pyroscope::{PyroscopeAgentBuilder, ReportEncoding},
 };
+use tempdir::TempDir;
 
 use crate::backend::{CamlSpy, CamlSpyConfig};
 
@@ -25,16 +26,19 @@ struct Cli {
     service_name: String,
 
     #[arg(long = "username", env = "PYRO_CAML_BASIC_AUTH_USERNAME")]
-    basic_auth_username: String,
+    basic_auth_username: Option<String>,
 
     #[arg(long = "password", env = "PYRO_CAML_BASIC_AUTH_PASSWORD")]
-    basic_auth_password: String,
+    basic_auth_password: Option<String>,
+
+    #[arg(long = "event_directory", env = "PYRO_CAML_EVENT_DIRECTORY")]
+    event_directory: Option<PathBuf>,
 
     #[arg(long = "rate", env = "PYRO_CAML_SAMPLE_RATE", default_value_t = 100)]
     sample_rate: u32,
 
-    #[arg(long = "event_directory", env = "PYRO_CAML_EVENT_DIRECTORY")]
-    event_directory: Option<PathBuf>,
+    #[arg(long = "tags", env = "PYRO_CAML_TAGS", default_value = "")]
+    tags: String,
 
     #[command(flatten)]
     verbosity: clap_verbosity_flag::Verbosity,
@@ -44,17 +48,45 @@ struct Cli {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
 }
+// Convert a string of tags to a Vec<(&str, &str)>
+fn string_to_tags<'a>(tags: &'a str) -> Vec<(&'a str, &'a str)> {
+    let mut tags_vec = Vec::new();
 
+    // check if string is empty
+    if tags.is_empty() {
+        return tags_vec;
+    }
+
+    for tag in tags.split(',') {
+        let mut tag_split = tag.split('=');
+        let key = tag_split.next().unwrap();
+        let value = tag_split.next().unwrap();
+        tags_vec.push((key, value));
+    }
+
+    tags_vec
+}
 fn make_agent_builder(
     server_address: &str,
     service_name: &str,
-    basic_auth_username: &str,
-    basic_auth_password: &str,
+    tags: Vec<(&str, &str)>,
+    basic_auth_username: Option<&str>,
+    basic_auth_password: Option<&str>,
 ) -> PyroscopeAgentBuilder {
     let mut agent_builder = PyroscopeAgentBuilder::new(server_address, service_name);
     agent_builder = agent_builder
         .report_encoding(ReportEncoding::PPROF)
-        .basic_auth(basic_auth_username, basic_auth_password);
+        .tags(tags);
+    match (basic_auth_username, basic_auth_password) {
+        (Some(username), Some(password)) => {
+            log::info!(target: LOG_TAG, "Using basic auth with username: {}", username);
+            agent_builder = agent_builder.basic_auth(username, password);
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            log::warn!(target: LOG_TAG, "One but not both of basic auth username or password not provided, skipping basic auth setup");
+        }
+        (None, None) => {}
+    };
     agent_builder
 }
 
@@ -63,19 +95,23 @@ fn main() {
     let bin_path = cli.binary_path;
     let args = cli.args;
     let sample_rate = cli.sample_rate;
-    let event_directory = cli
-        .event_directory
-        .unwrap_or_else(|| env::current_dir().unwrap());
+    let event_directory = cli.event_directory.unwrap_or_else(|| {
+        let dir = TempDir::new("pyro_caml")
+            .expect("failed to create temp dir")
+            .into_path();
+        log::debug!(target: LOG_TAG, "Using temporary event directory: {:?}", dir);
+        dir
+    });
 
     unsafe { std::env::set_var("RUST_LOG", cli.verbosity.log_level_filter().to_string()) };
     pretty_env_logger::init_timed();
 
-    // TODO get from flag or env
     let mut agent_builder = make_agent_builder(
         &cli.server_address,
         &cli.service_name,
-        &cli.basic_auth_username,
-        &cli.basic_auth_password,
+        string_to_tags(&cli.tags),
+        cli.basic_auth_username.as_deref(),
+        cli.basic_auth_password.as_deref(),
     );
     let backend_config = BackendConfig {
         report_thread_id: true,
@@ -83,6 +119,11 @@ fn main() {
         report_pid: true,
         report_oncpu: true,
     };
+    // check bin_path exists
+    if !bin_path.exists() {
+        log::error!(target: LOG_TAG, "Binary path does not exist: {:?}", bin_path);
+        std::process::exit(1);
+    }
     log::info!(target: LOG_TAG, "Starting child process: {:?} {:?}", bin_path, args.clone());
     // fork and call bin_path with args
     let mut child = std::process::Command::new(bin_path)
@@ -99,7 +140,7 @@ fn main() {
         sample_rate,
     };
     let backend = BackendImpl::new(
-        Box::new(CamlSpy::new(camlspy_config, backend_config)),
+        Box::new(CamlSpy::new(camlspy_config.clone(), backend_config)),
         Some(backend_config),
     );
     agent_builder = agent_builder.backend(backend);
@@ -108,10 +149,16 @@ fn main() {
     let ecode = child.wait().expect("failed to wait on child");
     match ecode.success() {
         true => log::info!(target: LOG_TAG, "Process exited successfully"),
-        false => log::error!(target: LOG_TAG, "Process exited with failure"),
+        false => {
+            log::error!(target: LOG_TAG, "Process exited with exit code: {:?}", ecode);
+            log::info!(target: LOG_TAG, "Cleaning up events file: {:?}", camlspy_config.get_event_file_path());
+            std::fs::remove_file(camlspy_config.get_event_file_path()).unwrap_or_else(
+                |err| log::error!(target: LOG_TAG, "Failed to remove events file: {:?}", err),
+            );
+        }
     }
 
-    // sleep for 10 seconds to allow the agent to flush data
-    thread::sleep(Duration::from_secs(10));
+    // sleep for 1 seconds to allow the agent to flush data
+    thread::sleep(Duration::from_secs(1));
     agent_running.stop().unwrap();
 }

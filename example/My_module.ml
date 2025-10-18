@@ -75,13 +75,10 @@ let do_thing () =
 
 let do_short_thing () = alloc_thing ()
 
-let sleep time = Unix.sleepf time [@@pyro_profile]
-
 let do_long_thing () =
   alloc_thing () ;
   alloc_thing () ;
   alloc_thing () ;
-  comp_and_callback Fun.id ;
-  sleep 0.01
+  comp_and_callback alloc_thing ;
 
 (* Example object *)
