@@ -15,8 +15,6 @@
 
 open Event
 
-type event = Event.t
-
 let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
 
 module Log = (val Logs.src_log src)
@@ -62,6 +60,15 @@ let with_memprof_sampler ?(sampling_rate = 1e-6) f =
   Fun.protect
     ~finally:(fun () -> Gc.Memprof.stop () ; Gc.Memprof.discard memprof)
     f
+
+let maybe_with_memprof_sampler ?sampling_rate f =
+  (* check if OCAML_RUNTIME_EVENTS_START is set *)
+  let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" in
+  match is_enabled with
+  | Some _ ->
+      with_memprof_sampler ?sampling_rate f
+  | None ->
+      f ()
 
 let samples_of_child_state (child_state : child_state) =
   Hashtbl.fold
