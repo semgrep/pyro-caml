@@ -4,4 +4,4 @@
  (private_modules mapper register)
  (kind ppx_rewriter)
  (libraries ppxlib)
- (ppx_runtime_libraries pyro-caml))
+ (ppx_runtime_libraries pyro-caml-instruments))

@@ -989,7 +989,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyro_caml"
+name = "pyro-caml"
 version = "0.1.0"
 dependencies = [
  "chrono",

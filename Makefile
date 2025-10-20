@@ -2,18 +2,26 @@ all: build
 
 
 
-build:
-	opam exec -- dune build
+vendor:
+	cargo vendor --locked
 
-run:
-	opam exec -- dune exec funocaml-o11y
+build:
+	dune build
+	cargo build
+
+build-release:
+	dune build --profile=release
+	cargo build --release
 
 clean:
-	opam exec -- dune clean
+	dune clean
+	cargo clean
 
 format:
-	opam exec -- dune build @fmt --auto-promote
+	dune build @fmt --auto-promote
+	cargo fmt -- --check
 
+# Should install rust also!
 setup:
 	opam update -y
 	opam switch create . --with-dev-setup -y
@@ -23,3 +31,5 @@ install-deps:
 
 shell:
 	nix develop .
+
+release: vendor build-release

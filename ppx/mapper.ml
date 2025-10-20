@@ -108,7 +108,7 @@ let raise_ident = "Stdlib.raise"
 
 let enter_pyro_caml loc =
   let var e = var e loc in
-  let enter = "Pyro_caml.enter" in
+  let enter = "Pyro_caml_instruments.enter" in
   let record_cs = "Printexc.get_callstack" in
   let max_int = "max_int" in
   Exp.apply (var enter)
@@ -116,7 +116,7 @@ let enter_pyro_caml loc =
 
 let exit_pyro_caml loc =
   let var e = var e loc in
-  let exit_ = "Pyro_caml.exit_" in
+  let exit_ = "Pyro_caml_instruments.exit_" in
   Exp.apply (var exit_) [(Nolabel, unit)]
 
 let wrap_pyro_caml expr =

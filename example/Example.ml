@@ -29,7 +29,7 @@ let example_func3 () = My_module.do_long_thing ()
 
 let () =
   Runtime_events.start () ;
-  Pyro_caml.with_memprof_sampler
+  Pyro_caml_instruments.with_memprof_sampler
   @@ fun () ->
   Printf.printf "Starting loop\n" ;
   flush_all () ;

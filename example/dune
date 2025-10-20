@@ -2,7 +2,7 @@
  (package pyro-caml-ppx)
  (name example)
  (public_name example)
- (libraries pyro-caml pyro-caml-ppx unix)
+ (libraries pyro-caml-instruments pyro-caml-ppx unix)
  (modes exe)
  (preprocess
   (pps ppx_pyro_caml))
