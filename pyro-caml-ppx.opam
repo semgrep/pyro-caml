@@ -3,14 +3,14 @@ opam-version: "2.0"
 synopsis: "Pyro Caml PPX"
 maintainer: ["Austin Theriault <austin@cutedogs.org>"]
 authors: ["Austin Theriault <austin@cutedogs.org>"]
-license: "OCaml-LGPL-linking-exception"
+license: "LGPL-2.1-only"
 tags: ["profiling" "ppx"]
 homepage: "https://github.com/semgrep/pyro-caml"
 bug-reports: "https://github.com/semgrep/pyro-caml/issues"
 depends: [
   "dune" {>= "3.20"}
   "ocaml"
-  "ppxlib"
+  "ppxlib" {<= "0.35.0"}
   "pyro-caml-instruments"
   "odoc" {with-doc}
 ]
