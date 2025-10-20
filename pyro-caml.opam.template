@@ -4,6 +4,7 @@ build: [
     "cargo"
     "build"
     "--release"
+    "--package"
     "pyro-caml"
   ]
 ]
