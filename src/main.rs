@@ -123,11 +123,6 @@ fn main() {
         report_pid: true,
         report_oncpu: true,
     };
-    // check bin_path exists
-    if !bin_path.exists() {
-        log::error!(target: LOG_TAG, "Binary path does not exist: {:?}", bin_path);
-        std::process::exit(1);
-    }
     log::info!(target: LOG_TAG, "Starting child process: {:?} {:?}", bin_path, args.clone());
     // fork and call bin_path with args
     let mut child = std::process::Command::new(bin_path)
