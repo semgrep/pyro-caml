@@ -23,11 +23,15 @@ const LOG_TAG: &str = "Pyro_caml::main";
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
-    #[arg(long = "address", env = "PYRO_CAML_SERVER_ADDRESS")]
-    server_address: String,
-
     #[arg(long = "name", env = "PYRO_CAML_SERVICE_NAME")]
     service_name: String,
+
+    #[arg(
+        long = "address",
+        env = "PYRO_CAML_SERVER_ADDRESS",
+        default = "http://localhost:4040"
+    )]
+    server_address: String,
 
     #[arg(long = "username", env = "PYRO_CAML_BASIC_AUTH_USERNAME")]
     basic_auth_username: Option<String>,
@@ -96,6 +100,10 @@ fn make_agent_builder(
 
 fn main() {
     let cli = Cli::parse();
+
+    unsafe { std::env::set_var("RUST_LOG", cli.verbosity.log_level_filter().to_string()) };
+    pretty_env_logger::init_timed();
+
     let bin_path = cli.binary_path;
     let args = cli.args;
     let sample_rate = cli.sample_rate;
@@ -107,8 +115,7 @@ fn main() {
         dir
     });
 
-    unsafe { std::env::set_var("RUST_LOG", cli.verbosity.log_level_filter().to_string()) };
-    pretty_env_logger::init_timed();
+    log::info!(target: LOG_TAG, "Sending profiles to Pyroscope server at: {}", cli.server_address);
 
     let mut agent_builder = make_agent_builder(
         &cli.server_address,
