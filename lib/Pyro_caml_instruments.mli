@@ -1,9 +1,5 @@
 val emit_point_event : Printexc.raw_backtrace -> unit
 
-val enter : Printexc.raw_backtrace -> unit
-
-val exit_ : unit -> unit
-
 val with_memprof_sampler : ?sampling_rate:float -> (unit -> 'a) -> 'a
 
 val maybe_with_memprof_sampler : ?sampling_rate:float -> (unit -> 'a) -> 'a

@@ -106,32 +106,17 @@ let unit = Exp.construct (mknoloc (Longident.parse "()")) None
 
 let raise_ident = "Stdlib.raise"
 
-let enter_pyro_caml loc =
+let emit_point_id loc =
   let var e = var e loc in
-  let enter = "Pyro_caml_instruments.enter" in
+  let enter = "Pyro_caml_instruments.emit_point_event" in
   let record_cs = "Printexc.get_callstack" in
   let max_int = "max_int" in
   Exp.apply (var enter)
     [(Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)])]
 
-let exit_pyro_caml loc =
-  let var e = var e loc in
-  let exit_ = "Pyro_caml_instruments.exit_" in
-  Exp.apply (var exit_) [(Nolabel, unit)]
-
 let wrap_pyro_caml expr =
   let loc = expr.pexp_loc in
-  let var e = var e loc in
-  Exp.sequence (enter_pyro_caml loc)
-    (Exp.let_ Nonrecursive
-       [ Vb.mk
-           (Pat.var (mknoloc "r"))
-           (Exp.try_ expr
-              [ Exp.case
-                  (Pat.var (mknoloc "e"))
-                  (Exp.sequence (exit_pyro_caml loc)
-                     (Exp.apply (var raise_ident) [(Nolabel, var "e")]) ) ] ) ]
-       (Exp.sequence (exit_pyro_caml loc) (var "r")) )
+  Exp.sequence (emit_point_id loc) expr
 
 let rec wrap_pyro_caml_method ({pexp_desc; _} as expr) =
   match pexp_desc with
