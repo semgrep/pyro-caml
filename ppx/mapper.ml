@@ -179,13 +179,11 @@ let translate_value_bindings value_binding auto vbs =
   List.map
     (fun vb ->
       match has_identifier_attribute ~auto vb.pvb_attributes with
-      | Some [] ->
+      | Some _ ->
           let pvb_expr = translate_pvb_expr vb.pvb_expr in
           { vb with
             pvb_expr
           ; pvb_attributes= remove_attribute ppx_identifier vb.pvb_attributes }
-      | Some (_ :: _) ->
-          error vb.pvb_loc `Too_many_attributes
       | None ->
           value_binding vb )
     vbs
