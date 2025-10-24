@@ -1,5 +1,6 @@
 use std::{path::PathBuf, thread, time::Duration};
 
+use crate::backend::{CamlSpy, CamlSpyConfig};
 use clap::Parser;
 use nix::{
     sys::signal::{self, Signal},
@@ -11,8 +12,6 @@ use pyroscope::{
 };
 use tempdir::TempDir;
 
-use crate::backend::{CamlSpy, CamlSpyConfig};
-
 mod backend;
 mod ocaml_intf;
 
@@ -21,42 +20,52 @@ const OCAML_RUNTIME_EVENTS_DIR: &str = "OCAML_RUNTIME_EVENTS_DIR";
 const LOG_TAG: &str = "Pyro_caml::main";
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about="An OCaml profiler compatible with Pyroscope", long_about = None)]
 struct Cli {
+    /// Name of the service that is being profiled
     #[arg(long = "name", env = "PYRO_CAML_SERVICE_NAME")]
     service_name: String,
 
+    /// Pyroscope server that profiles will be sent to
     #[arg(
         long = "address",
         env = "PYRO_CAML_SERVER_ADDRESS",
-        default = "http://localhost:4040"
+        default_value = "http://localhost:4040"
     )]
     server_address: String,
 
+    /// Username for authorization with the Pyroscope server
     #[arg(long = "username", env = "PYRO_CAML_BASIC_AUTH_USERNAME")]
     basic_auth_username: Option<String>,
 
+    ///Password for authorization with the Pyroscope server
     #[arg(long = "password", env = "PYRO_CAML_BASIC_AUTH_PASSWORD")]
     basic_auth_password: Option<String>,
 
+    /// Which directory the OCaml runtime events will store its temporary event files in
     #[arg(long = "event_directory", env = "PYRO_CAML_EVENT_DIRECTORY")]
     event_directory: Option<PathBuf>,
 
+    /// How many times per second to sample the OCaml program
     #[arg(long = "rate", env = "PYRO_CAML_SAMPLE_RATE", default_value_t = 100)]
     sample_rate: u32,
 
+    /// Tags to attach to the profiles, in the format key1=value1,key2=value2
     #[arg(long = "tags", env = "PYRO_CAML_TAGS", default_value = "")]
     tags: String,
 
     #[command(flatten)]
     verbosity: clap_verbosity_flag::Verbosity,
 
-    binary_path: PathBuf,
+    /// Name of the OCaml binary to profile
+    binary: PathBuf,
 
+    /// Arguments to pass to BINARY
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
 }
-// Convert a string of tags to a Vec<(&str, &str)>
+// Convert a string of tags to a Vec<(&str, &str)>, so we can parse the tags
+// config value
 fn string_to_tags<'a>(tags: &'a str) -> Vec<(&'a str, &'a str)> {
     let mut tags_vec = Vec::new();
 
@@ -84,7 +93,12 @@ fn make_agent_builder(
     let mut agent_builder = PyroscopeAgentBuilder::new(server_address, service_name);
     agent_builder = agent_builder
         .report_encoding(ReportEncoding::PPROF)
+        // TODO: add some tags about pyro caml's version
         .tags(tags);
+    // Optionally configure auth. localhost:4040 usually doesn't need it but
+    // grafana does
+    //
+    // TODO token auth?
     match (basic_auth_username, basic_auth_password) {
         (Some(username), Some(password)) => {
             log::info!(target: LOG_TAG, "Using basic auth with username: {}", username);
@@ -101,13 +115,15 @@ fn make_agent_builder(
 fn main() {
     let cli = Cli::parse();
 
+    // there is probably a better way to do this
     unsafe { std::env::set_var("RUST_LOG", cli.verbosity.log_level_filter().to_string()) };
     pretty_env_logger::init_timed();
 
-    let bin_path = cli.binary_path;
+    let bin = cli.binary;
     let args = cli.args;
     let sample_rate = cli.sample_rate;
     let event_directory = cli.event_directory.unwrap_or_else(|| {
+        // use a temp dir since that'll probably be in memory and probably faster
         let dir = TempDir::new("pyro_caml")
             .expect("failed to create temp dir")
             .into_path();
@@ -127,12 +143,13 @@ fn main() {
     let backend_config = BackendConfig {
         report_thread_id: true,
         report_thread_name: true,
+        // do we really care about this?
         report_pid: true,
         report_oncpu: true,
     };
-    log::info!(target: LOG_TAG, "Starting child process: {:?} {:?}", bin_path, args.clone());
+    log::info!(target: LOG_TAG, "Starting child process: {:?} {:?}", bin, args.clone());
     // fork and call bin_path with args
-    let mut child = std::process::Command::new(bin_path)
+    let mut child = std::process::Command::new(bin)
         .args(args)
         .env(OCAML_RUNTIME_EVENTS_START, "1")
         .env(OCAML_RUNTIME_EVENTS_DIR, event_directory.to_str().unwrap())

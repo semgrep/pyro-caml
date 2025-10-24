@@ -16,7 +16,7 @@
 (package
  (name pyro-caml-instruments)
  (synopsis "Pyroscope + OCaml = Pyro Caml")
- (depends ocaml mtime logs digestif)
+ (depends ocaml logs digestif)
  (tags ("profiling")))
 
 (package

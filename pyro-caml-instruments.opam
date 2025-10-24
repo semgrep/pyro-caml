@@ -10,7 +10,6 @@ bug-reports: "https://github.com/semgrep/pyro-caml/issues"
 depends: [
   "dune" {>= "3.20"}
   "ocaml"
-  "mtime"
   "logs"
   "digestif"
   "odoc" {with-doc}
