@@ -22,7 +22,7 @@ build: [
     "cargo"
     "build"
     "--config"
-    "vendor/config.toml"
+    "config/config.toml"
     "--release"
     "--package"
     "pyro-caml"
