@@ -58,8 +58,8 @@ impl CamlSpyConfig {
         })
     }
 
-    fn sample_interval_ms(&self) -> f64 {
-        1000.0 / self.sample_rate as f64
+    fn sample_interval(&self) -> f64 {
+        1.0 / self.sample_rate as f64
     }
 }
 
@@ -132,9 +132,7 @@ impl Backend for CamlSpy {
                 let cursor = config.acquire_cursor();
                 log::trace!(target:LOG_TAG, "sampling...");
                 let mut stack_frames: Vec<StackTrace> = OCAML_GC
-                    .with_borrow(|gc| {
-                        ocaml_intf::read_poll(gc, cursor, config.sample_interval_ms())
-                    })?
+                    .with_borrow(|gc| ocaml_intf::read_poll(gc, cursor, config.sample_interval()))?
                     .into_iter()
                     .map(|st| st.into_stack_trace(backend_config.deref(), config.pid))
                     .collect();

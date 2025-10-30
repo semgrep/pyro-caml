@@ -11,6 +11,7 @@ depends: [
   "ocaml"
   "conf-rust-2024"
   "pyro-caml-instruments"
+  "pyro-caml-ppx"
   "odoc" {with-doc}
 ]
 dev-repo: "git+https://github.com/semgrep/pyro-caml.git"
@@ -20,6 +21,8 @@ build: [
   [
     "cargo"
     "build"
+    "--config"
+    "vendor/config.toml"
     "--release"
     "--package"
     "pyro-caml"

@@ -34,5 +34,6 @@
 (package
  (name pyro-caml)
  (synopsis "OCaml profiler with Pyroscope backend")
- (depends ocaml conf-rust-2024 pyro-caml-instruments))
+ (depends ocaml conf-rust-2024 pyro-caml-instruments pyro-caml-ppx))
+
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
