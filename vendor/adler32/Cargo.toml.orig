@@ -1,0 +1,47 @@
+[package]
+name = "adler32"
+version = "1.2.0"
+authors = ["Remi Rampin <remirampin@gmail.com>"]
+edition = "2018"
+description = "Minimal Adler32 implementation for Rust."
+documentation = "https://docs.rs/adler32/"
+repository = "https://github.com/remram44/adler32-rs"
+readme = "README.md"
+keywords = ["adler32", "hash", "rolling"]
+license = "Zlib"
+
+[dependencies]
+# Internal features, only used when building as part of libstd, not part of the
+# stable interface of this crate.
+core = { version = '1.0.0', optional = true, package = 'rustc-std-workspace-core' }
+compiler_builtins = { version = '0.1.2', optional = true }
+
+[features]
+default = ['std']
+std = []
+
+# Internal feature, only used when building as part of libstd, not part of the
+# stable interface of this crate.
+rustc-dep-of-std = ['core', 'compiler_builtins']
+
+[dev-dependencies]
+# The lines marked 'benchmark only' get removed on CI for platforms/versions
+# where we don't run the benchmarks (e.g. versions not supported by criterion)
+criterion = "0.3" # benchmark only
+humansize = "1.1" # benchmark only
+rand = "0.7"
+getrandom = { version = "0.1", features = ["wasm-bindgen"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = "0.2.63"
+wasm-bindgen-test = "0.3"
+
+[[bench]]
+path = "src/bench.rs"
+name = "bench"
+harness = false
+
+[lib]
+# Disable `libtest` so Criterion-only parameters like `--save-baseline` work.
+# See https://bheisler.github.io/criterion.rs/book/faq.html#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options
+bench = false

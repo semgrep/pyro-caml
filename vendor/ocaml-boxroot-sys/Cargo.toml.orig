@@ -1,0 +1,36 @@
+[package]
+name = "ocaml-boxroot-sys"
+version = "0.4.0"
+authors = ["Guillaume Munch-Maccagnoni <Guillaume.Munch-Maccagnoni@inria.fr>",
+           "Gabriel Scherer <Gabriel.Scherer@inria.fr>",
+           "Bruno Deferrari <utizoc@gmail.com>"]
+edition = "2018"
+license = "MIT"
+description = "Boxroot for OCaml: fast movable GC roots (C API)"
+categories = ["memory-management"]
+homepage = "https://gitlab.com/ocaml-rust/ocaml-boxroot"
+repository = "https://gitlab.com/ocaml-rust/ocaml-boxroot"
+keywords = ["ocaml", "rust", "ffi"]
+include = ["build.rs",
+           "src/*.rs",
+           "vendor/boxroot/*.c",
+           "vendor/boxroot/*.h",
+           "vendor/README.md",
+           "vendor/Changes.md",
+           "README.md"]
+links = "ocaml-boxroot"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package.metadata.docs.rs]
+features = []
+
+[dependencies]
+
+[build-dependencies]
+cc = { version = "^1.0" }
+
+[features]
+default = ["bundle-boxroot"]
+link-ocaml-runtime-and-dummy-program = [] # Only for testing purposes
+bundle-boxroot = [] # Builds and links boxroot, otherwise it must be taken care of when linking the final binary

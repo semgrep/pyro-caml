@@ -1,1 +1,1 @@
-/vendor/* text=auto eol=lf
+/vendor/**/* -text -diff

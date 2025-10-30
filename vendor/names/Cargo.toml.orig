@@ -1,0 +1,34 @@
+[package]
+name = "names"
+version = "0.14.0"
+authors = ["Fletcher Nichol <fnichol@nichol.ca>"]
+edition = "2018"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/fnichol/names"
+documentation = "https://docs.rs/names"
+homepage = "https://github.com/fnichol/names"
+keywords = ["name", "random"]
+categories = ["command-line-utilities"]
+description = """
+A random name generator with names suitable for use in container
+instances, project names, application instances, etc.
+"""
+
+[features]
+default = ["application"]
+
+# Required for building the `names` CLI. Should be disabled when depending on
+# names as a library. For example, to use as a library in a Cargo.toml:
+# `names = { version = "...", default-features = false }`
+application = ["clap"]
+
+[dependencies]
+clap = { version = "3.1.5", optional = true, features = ["derive"] }
+rand = "0.8.4"
+
+[dev-dependencies]
+version-sync = "0.9.1"
+
+[package.metadata.docs.rs]
+no-default-features = true
