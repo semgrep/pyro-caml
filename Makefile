@@ -1,8 +1,8 @@
+.PHONY: all vendor build build-release clean format setup install-deps shell release
 all: build
 
-
-
 vendor:
+	cargo update
 	cargo vendor --locked
 
 build:
