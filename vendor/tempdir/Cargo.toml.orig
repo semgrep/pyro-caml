@@ -1,0 +1,25 @@
+[package]
+
+name = "tempdir"
+# NB: When modifying, also modify html_root_url in lib.rs
+version = "0.3.7"
+authors = ["The Rust Project Developers"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/rust-lang/tempdir"
+homepage = "https://github.com/rust-lang/tempdir"
+documentation = "https://doc.rust-lang.org/tempdir"
+description = """
+A library for managing a temporary directory and deleting all contents when it's
+dropped.
+"""
+categories = ["filesystem"]
+keywords = ["fs", "file", "filesystem"]
+
+[badges]
+travis-ci = { repository = "rust-lang-nursery/tempdir" }
+appveyor = { repository = "rust-lang-libs/tempdir" }
+
+[dependencies]
+rand = "0.4"
+remove_dir_all = "0.5"

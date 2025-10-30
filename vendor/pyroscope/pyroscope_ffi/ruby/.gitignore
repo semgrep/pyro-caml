@@ -1,0 +1,16 @@
+*.gem
+.DS_Store
+**/target
+*.so*
+*.bundle
+/pkg
+/doc
+/coverage
+/tmp
+/vendor
+/.bundle
+.eggs
+elflib/*/build
+elflib/*/dist
+elflib/*/wheelhouse
+elflib/*/*egg-info

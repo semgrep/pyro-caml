@@ -1,0 +1,19 @@
+[package]
+name = "ocaml-derive"
+version = "1.0.0"
+authors = ["Zach Shipko <zachshipko@gmail.com>"]
+license = "ISC"
+keywords = ["ocaml-rs", "proc-macro"]
+repository = "https://github.com/zshipko/ocaml-rs"
+description = "OCaml procedural macros"
+documentation = "https://docs.rs/ocaml-derive"
+readme = "./README.md"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = {version = "2", features = ["full"]}
+proc-macro2 = {version = "1"}
+quote = "1"

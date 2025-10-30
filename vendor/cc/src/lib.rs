@@ -783,17 +783,19 @@ impl Build {
 
     /// Set the `-shared` flag.
     ///
-    /// When enabled, the compiler will produce a shared object which can
-    /// then be linked with other objects to form an executable.
+    /// This will typically be ignored by the compiler when calling [`Self::compile()`] since it only
+    /// produces static libraries.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// // This will create a library named "liblibfoo.so.a"
     /// cc::Build::new()
     ///     .file("src/foo.c")
     ///     .shared_flag(true)
     ///     .compile("libfoo.so");
     /// ```
+    #[deprecated = "cc only creates static libraries, setting this does nothing"]
     pub fn shared_flag(&mut self, shared_flag: bool) -> &mut Build {
         self.shared_flag = Some(shared_flag);
         self
@@ -801,8 +803,8 @@ impl Build {
 
     /// Set the `-static` flag.
     ///
-    /// When enabled on systems that support dynamic linking, this prevents
-    /// linking with the shared libraries.
+    /// This will typically be ignored by the compiler when calling [`Self::compile()`] since it only
+    /// produces static libraries.
     ///
     /// # Example
     ///
@@ -813,6 +815,7 @@ impl Build {
     ///     .static_flag(true)
     ///     .compile("foo");
     /// ```
+    #[deprecated = "cc only creates static libraries, setting this does nothing"]
     pub fn static_flag(&mut self, static_flag: bool) -> &mut Build {
         self.static_flag = Some(static_flag);
         self
@@ -1319,7 +1322,7 @@ impl Build {
     /// always run on every compilation if no rerun cargo metadata is emitted.
     ///
     /// NOTE that cc does not emit metadata to detect changes for `PATH`, since it could
-    /// be changed every comilation yet does not affect the result of compilation
+    /// be changed every compilation yet does not affect the result of compilation
     /// (i.e. rust-analyzer adds temporary directory to `PATH`).
     ///
     /// cc in general, has no way detecting changes to compiler, as there are so many ways to
@@ -1805,7 +1808,7 @@ impl Build {
                 is_arm,
             },
         );
-        // armasm and armasm64 don't requrie -c option
+        // armasm and armasm64 don't require -c option
         if !is_assembler_msvc || !is_arm {
             cmd.arg("-c");
         }

@@ -1,3 +1,5 @@
+use crate::io::uring::open::Open;
+use crate::io::uring::write::Write;
 use crate::runtime::Handle;
 use io_uring::cqueue;
 use io_uring::squeue::Entry;
@@ -8,8 +10,14 @@ use std::task::Poll;
 use std::task::Waker;
 use std::{io, mem};
 
+// This field isn't accessed directly, but it holds cancellation data,
+// so `#[allow(dead_code)]` is needed.
+#[allow(dead_code)]
 #[derive(Debug)]
-pub(crate) enum CancelData {}
+pub(crate) enum CancelData {
+    Open(Open),
+    Write(Write),
+}
 
 #[derive(Debug)]
 pub(crate) enum Lifecycle {
@@ -21,14 +29,17 @@ pub(crate) enum Lifecycle {
 
     /// The submitter no longer has interest in the operation result. The state
     /// must be passed to the driver and held until the operation completes.
-    Cancelled(CancelData),
+    Cancelled(
+        // This field isn't accessed directly, but it holds cancellation data,
+        // so `#[allow(dead_code)]` is needed.
+        #[allow(dead_code)] CancelData,
+    ),
 
     /// The operation has completed with a single cqe result
     Completed(io_uring::cqueue::Entry),
 }
 
 pub(crate) enum State {
-    #[allow(dead_code)]
     Initialize(Option<Entry>),
     Polled(usize),
     Complete,
@@ -48,7 +59,6 @@ impl<T: Cancellable> Op<T> {
     ///
     /// Callers must ensure that parameters of the entry (such as buffer) are valid and will
     /// be valid for the entire duration of the operation, otherwise it may cause memory problems.
-    #[allow(dead_code)]
     pub(crate) unsafe fn new(entry: Entry, data: T) -> Self {
         let handle = Handle::current();
         Self {
@@ -82,7 +92,6 @@ impl<T: Cancellable> Drop for Op<T> {
 
 /// A single CQE result
 pub(crate) struct CqeResult {
-    #[allow(dead_code)]
     pub(crate) result: io::Result<u32>,
 }
 

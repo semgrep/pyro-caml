@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.71"
 name = "rustls"
-version = "0.23.32"
+version = "0.23.34"
 build = "build.rs"
 exclude = [
     "src/testdata",
@@ -34,15 +34,6 @@ categories = [
 license = "Apache-2.0 OR ISC OR MIT"
 repository = "https://github.com/rustls/rustls"
 
-[package.metadata.cargo-semver-checks.lints]
-enum_no_repr_variant_discriminant_changed = "warn"
-
-[package.metadata.cargo_check_external_types]
-allowed_external_types = [
-    "rustls_pki_types",
-    "rustls_pki_types::*",
-]
-
 [package.metadata.docs.rs]
 features = [
     "read_buf",
@@ -50,8 +41,17 @@ features = [
 ]
 rustdoc-args = [
     "--cfg",
-    "docsrs",
+    "rustls_docsrs",
 ]
+
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    "rustls_pki_types",
+    "rustls_pki_types::*",
+]
+
+[package.metadata.cargo-semver-checks.lints]
+enum_no_repr_variant_discriminant_changed = "warn"
 
 [features]
 aws-lc-rs = ["aws_lc_rs"]
@@ -230,4 +230,5 @@ check-cfg = [
     "cfg(bench)",
     "cfg(coverage_nightly)",
     "cfg(read_buf)",
+    "cfg(rustls_docsrs)",
 ]

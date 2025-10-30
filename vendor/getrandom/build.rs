@@ -26,7 +26,7 @@ fn rustc_minor_version() -> Option<u64> {
     // where "xx" is the minor version which we want to extract
     let mut lines = stdout.lines();
     let first_line = lines.next()?;
-    let minor_ver_str = first_line.split(".").nth(1)?;
+    let minor_ver_str = first_line.split('.').nth(1)?;
     minor_ver_str.parse().ok()
 }
 
@@ -34,8 +34,8 @@ fn main() {
     // Automatically detect cfg(sanitize = "memory") even if cfg(sanitize) isn't
     // supported. Build scripts get cfg() info, even if the cfg is unstable.
     println!("cargo:rerun-if-changed=build.rs");
-    let santizers = std::env::var("CARGO_CFG_SANITIZE").unwrap_or_default();
-    if santizers.contains("memory") {
+    let sanitizers = std::env::var("CARGO_CFG_SANITIZE").unwrap_or_default();
+    if sanitizers.contains("memory") {
         println!("cargo:rustc-cfg=getrandom_msan");
     }
 
@@ -48,7 +48,7 @@ fn main() {
 
         match rustc_minor_version() {
             Some(minor_ver) if minor_ver < WIN7_INTRODUCED_MINOR_VER => {
-                println!("cargo:rustc-cfg=getrandom_windows_legacy");
+                println!("cargo:rustc-cfg=getrandom_backend=\"windows_legacy\"");
             }
             None => println!("cargo:warning=Couldn't detect minor version of the Rust compiler"),
             _ => {}

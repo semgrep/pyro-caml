@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.57"
 name = "web-sys"
-version = "0.3.81"
+version = "0.3.82"
 authors = ["The wasm-bindgen Developers"]
 build = false
 include = [
@@ -319,6 +319,15 @@ ConvolverNode = [
     "EventTarget",
 ]
 ConvolverOptions = []
+CookieChangeEvent = ["Event"]
+CookieChangeEventInit = []
+CookieInit = []
+CookieListItem = []
+CookieSameSite = []
+CookieStore = ["EventTarget"]
+CookieStoreDeleteOptions = []
+CookieStoreGetOptions = []
+CookieStoreManager = []
 Coordinates = []
 CountQueuingStrategy = []
 Credential = []
@@ -502,6 +511,11 @@ ExtSRgb = []
 ExtShaderTextureLod = []
 ExtTextureFilterAnisotropic = []
 ExtTextureNorm16 = []
+ExtendableCookieChangeEvent = [
+    "Event",
+    "ExtendableEvent",
+]
+ExtendableCookieChangeEventInit = []
 ExtendableEvent = ["Event"]
 ExtendableEventInit = []
 ExtendableMessageEvent = [
@@ -2748,11 +2762,11 @@ test = false
 doctest = false
 
 [dependencies.js-sys]
-version = "=0.3.81"
+version = "=0.3.82"
 default-features = false
 
 [dependencies.wasm-bindgen]
-version = "=0.2.104"
+version = "=0.2.105"
 default-features = false
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies.futures]

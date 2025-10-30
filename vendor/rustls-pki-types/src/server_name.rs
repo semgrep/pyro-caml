@@ -166,6 +166,12 @@ impl From<std::net::Ipv6Addr> for ServerName<'_> {
     }
 }
 
+impl<'a> From<DnsName<'a>> for ServerName<'a> {
+    fn from(dns_name: DnsName<'a>) -> Self {
+        Self::DnsName(dns_name)
+    }
+}
+
 /// A type which encapsulates a string (borrowed or owned) that is a syntactically valid DNS name.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct DnsName<'a>(DnsNameInner<'a>);
@@ -286,9 +292,9 @@ impl Hash for DnsNameInner<'_> {
 impl fmt::Debug for DnsNameInner<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Borrowed(s) => f.write_fmt(format_args!("{:?}", s)),
+            Self::Borrowed(s) => f.write_fmt(format_args!("{s:?}")),
             #[cfg(feature = "alloc")]
-            Self::Owned(s) => f.write_fmt(format_args!("{:?}", s)),
+            Self::Owned(s) => f.write_fmt(format_args!("{s:?}")),
         }
     }
 }
@@ -440,6 +446,12 @@ impl From<std::net::Ipv6Addr> for IpAddr {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Ipv4Addr([u8; 4]);
 
+impl From<[u8; 4]> for Ipv4Addr {
+    fn from(value: [u8; 4]) -> Self {
+        Self(value)
+    }
+}
+
 impl TryFrom<&str> for Ipv4Addr {
     type Error = AddrParseError;
 
@@ -542,7 +554,7 @@ mod parser {
     }
 
     impl<'a> Parser<'a> {
-        pub(super) fn new(input: &'a [u8]) -> Self {
+        pub(super) const fn new(input: &'a [u8]) -> Self {
             Parser { state: input }
         }
 
@@ -852,7 +864,7 @@ mod tests {
     fn test_validation() {
         for (input, expected) in TESTS {
             #[cfg(feature = "std")]
-            println!("test: {:?} expected valid? {:?}", input, expected);
+            println!("test: {input:?} expected valid? {expected:?}");
             let name_ref = DnsName::try_from(*input);
             assert_eq!(*expected, name_ref.is_ok());
             let name = DnsName::try_from(input.to_string());
@@ -863,20 +875,20 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[test]
     fn error_is_debug() {
-        assert_eq!(format!("{:?}", InvalidDnsNameError), "InvalidDnsNameError");
+        assert_eq!(format!("{InvalidDnsNameError:?}"), "InvalidDnsNameError");
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn error_is_display() {
-        assert_eq!(format!("{}", InvalidDnsNameError), "invalid dns name");
+        assert_eq!(format!("{InvalidDnsNameError}"), "invalid dns name");
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn dns_name_is_debug() {
         let example = DnsName::try_from("example.com".to_string()).unwrap();
-        assert_eq!(format!("{:?}", example), "DnsName(\"example.com\")");
+        assert_eq!(format!("{example:?}"), "DnsName(\"example.com\")");
     }
 
     #[cfg(feature = "alloc")]

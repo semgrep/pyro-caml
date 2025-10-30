@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.57"
 name = "wasm-bindgen-shared"
-version = "0.2.104"
+version = "0.2.105"
 authors = ["The wasm-bindgen Developers"]
 build = "build.rs"
 links = "wasm_bindgen"
@@ -50,6 +50,7 @@ new_without_default = "allow"
 overly_complex_bool_expr = "allow"
 too_many_arguments = "allow"
 type_complexity = "allow"
+uninlined_format_args = "warn"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"
