@@ -1,6 +1,0 @@
-**/target/
-**/pkg/
-**/dist/
-**/build/
-**/*egg-info*/
-**/**/Makefile

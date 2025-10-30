@@ -1,5 +1,0 @@
-[book]
-authors = ["Zach Shipko"]
-language = "en"
-src = "./src"
-title = "ocaml-rs"

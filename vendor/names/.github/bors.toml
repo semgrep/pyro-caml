@@ -1,2 +1,0 @@
-status = ["ci-finished"]
-commit_title = "merge: ${PR_REFS}"
