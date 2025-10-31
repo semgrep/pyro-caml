@@ -14,7 +14,7 @@ _build/
 
 # cargo
 # always include everything! the vendor folder
-!vendor/
+!vendor/**
 /target/
 
 *.events
