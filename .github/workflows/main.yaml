@@ -26,9 +26,7 @@ jobs:
           ocaml-compiler: 5.3.0
           dune-cache: true
       - name: Setup
-        run:
-          make setup
-          make install-deps
+        run: make install-deps
       - name: build
         run: make
       - name: Install
