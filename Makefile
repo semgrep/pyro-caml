@@ -3,7 +3,8 @@ all: build
 
 vendor:
 	cargo update
-	cargo vendor --locked
+	cargo vendor +stable-aarch64-apple-darwin --locked
+	cargo vendor +x86_64-unknown-linux-musl --locked
 
 build:
 	dune build
@@ -28,6 +29,9 @@ setup:
 
 install-deps:
 	opam install . --deps-only --with-dev-setup -y
+
+install:
+	opam install . -y
 
 shell:
 	nix develop .
