@@ -54,6 +54,14 @@ struct Cli {
     #[arg(long = "tags", env = "PYRO_CAML_TAGS", default_value = "")]
     tags: String,
 
+    /// Whether to keep the OCaml runtime events file after the profiled program exits
+    #[arg(
+        long = "keep_events_file",
+        env = "PYRO_CAML_KEEP_EVENTS_FILE",
+        default_value_t = false
+    )]
+    keep_events_file: bool,
+
     #[command(flatten)]
     verbosity: clap_verbosity_flag::Verbosity,
 
@@ -130,6 +138,7 @@ fn main() {
         log::debug!(target: LOG_TAG, "Using temporary event directory: {:?}", dir);
         dir
     });
+    let keep_events_file = cli.keep_events_file;
 
     log::info!(target: LOG_TAG, "Sending profiles to Pyroscope server at: {}", cli.server_address);
 
@@ -184,10 +193,12 @@ fn main() {
         true => log::info!(target: LOG_TAG, "Process exited successfully"),
         false => {
             log::error!(target: LOG_TAG, "Process exited with exit code: {:?}", ecode);
-            log::info!(target: LOG_TAG, "Cleaning up events file: {:?}", camlspy_config.get_event_file_path());
-            std::fs::remove_file(camlspy_config.get_event_file_path()).unwrap_or_else(
-                |err| log::error!(target: LOG_TAG, "Failed to remove events file: {:?}", err),
-            );
+            if !keep_events_file {
+                log::info!(target: LOG_TAG, "Cleaning up events file: {:?}", camlspy_config.get_event_file_path());
+                std::fs::remove_file(camlspy_config.get_event_file_path()).unwrap_or_else(
+                    |err| log::error!(target: LOG_TAG, "Failed to remove events file: {:?}", err),
+                );
+            }
         }
     }
 

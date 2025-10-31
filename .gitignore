@@ -12,5 +12,9 @@ _build/
 # direnv
 .direnv/
 
+# cargo
+# always include everything! the vendor folder
+!vendor/
 /target/
+
 *.events
