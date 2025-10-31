@@ -1,5 +1,4 @@
 build: [
-  ["cargo" "build" "--package" "pyro-caml"] {dev}
   [
     "cargo"
     "build"

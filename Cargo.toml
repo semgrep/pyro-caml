@@ -16,4 +16,4 @@ pyroscope = "0.5.8"
 tempdir = "0.3.7"
 
 [build-dependencies]
-ocaml-build = { version = "1.0.0", features = ["dune"] }
+cc = "1.2.44"

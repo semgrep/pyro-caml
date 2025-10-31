@@ -4,6 +4,7 @@
 tmp/
 # opam
 _opam/
+*.install
 
 # dune
 _build/
