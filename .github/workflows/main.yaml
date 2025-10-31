@@ -28,7 +28,7 @@ jobs:
       - name: Setup
         run: make install-deps
       - name: build
-        run: make
+        run: opam exec -- make
       - name: Install
         run: make install
       - name: run pyro-caml
