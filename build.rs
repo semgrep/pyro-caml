@@ -4,15 +4,13 @@ use std::path::{Path, PathBuf};
 pub struct Dune {
     root: PathBuf,
     library: PathBuf,
-    package: String,
 }
 
 impl Dune {
-    pub fn new(library: impl AsRef<Path>, package: String) -> Dune {
+    pub fn new(library: impl AsRef<Path>) -> Dune {
         Dune {
             root: PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()),
             library: library.as_ref().to_path_buf(),
-            package,
         }
     }
 
@@ -26,8 +24,10 @@ impl Dune {
             .current_dir(&self.root)
             .arg("build")
             // -p enforces it to be a release/only build package necessary
-            .arg("-p")
-            .arg(self.package.as_str())
+            .arg("--root")
+            .arg(".")
+            .arg("--profile")
+            .arg("release")
             .status()
             .unwrap();
         assert!(c.success());
@@ -55,5 +55,5 @@ impl Dune {
 pub fn main() {
     println!("cargo:rerun-if-changed=bindings");
     println!("cargo:rerun-if-changed=lib");
-    Dune::new("bindings", "pyro-caml".to_string()).build()
+    Dune::new("bindings").build()
 }
