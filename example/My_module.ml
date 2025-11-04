@@ -26,7 +26,6 @@ let f x y z =
   let b = a * z in
   let c = b - y in
   c
-(* [@@pyro_profile] *)
 
 let alloc_thing () =
   let random_list =
@@ -79,6 +78,6 @@ let do_long_thing () =
   alloc_thing () ;
   alloc_thing () ;
   alloc_thing () ;
-  comp_and_callback alloc_thing ;
+  comp_and_callback alloc_thing
 
 (* Example object *)
