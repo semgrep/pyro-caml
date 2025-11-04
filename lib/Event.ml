@@ -16,8 +16,14 @@
 (*****************************************************************************)
 (* Event *)
 (*****************************************************************************)
+(* md5 feels fast and safe enough *)
 module Hash = Digest.MD5
 
+(* an event is either a point or partial. We have a notion of a partial event
+   since runtime events only support payloads of max 1024 bytes, and any larger
+   will raise an exception. Since some callstacks can be LARGE!! we break up the
+   callstack into a multipart message that is then reassembled by the
+   profiler *)
 type t =
   | Point of (float * Stack_trace.raw_stack_trace)
   | Partial of {id: Hash.t; bytes: Bytes.t; part: int; part_count: int}
@@ -41,10 +47,17 @@ let marshal e =
   let len = Bytes.length marshaled_event in
   (marshaled_event, len)
 
+(* 800 is chosen since when we break the event up into a partial event, we need
+   to save some room for the other parts of the Partial data structure besides
+   the bytes*)
+(* TODO be more clever about max size *)
 let marshal_event ?(max_size = 800) e =
   let marshaled_event, len = marshal e in
+  (* Max size of runtime event type payload *)
+  (* https://ocaml.org/manual/5.3/api/Runtime_events.Type.html *)
   if len <= 1024 then [(marshaled_event, len)]
   else
+    (* if it's bigger split it up! *)
     let id = Hash.bytes marshaled_event in
     let parts = split_bytes marshaled_event max_size in
     let mk_part part part_bytes =
@@ -76,8 +89,13 @@ let emit_event e =
     marshaled_events
 [@@inline always]
 
+(* buffer for storing partial events so we can then rebuild them  *)
 type event_buffer = (Hash.t, (int * Bytes.t) list) Hashtbl.t
 
+(* event_of_perf event will keep track of partial events and spit them out as
+   normal events if it finds all the parts *)
+(* TODO this would probably make more sense if it spit out Point option or
+   similar? *)
 let event_of_perf_event buffer (marshaled, _) : t =
   let event = Marshal.from_bytes marshaled 0 in
   match event with

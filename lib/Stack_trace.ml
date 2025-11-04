@@ -19,17 +19,25 @@
 
 type slot = Printexc.backtrace_slot
 
+(* What's sent via runtime events. this HAS to be marshalable*)
 type raw_stack_trace = {slots: slot array; domain_id: int; thread_name: string}
 
 let raw_stack_trace_of_backtrace bt : raw_stack_trace =
+  (* Use the domain as the ID since runtime event sampling happens per domain *)
+  (* TODO? also somehow include thread id *)
   let did = (Domain.self () :> int) in
+  (* Nice to call it main but probably not necessary *)
   let name = if Domain.is_main_domain () then "main" else string_of_int did in
+  (* if there aren't any slots then not much we can do *)
   let slots = Option.value ~default:[||] Printexc.(backtrace_slots bt) in
   {slots; domain_id= did; thread_name= name}
 
 (*****************************************************************************)
 (* Stack frames *)
 (*****************************************************************************)
+(* Essentially what info we want to send via the sdk *)
+(* Inlined functions are filtered out in ocaml_intf always right now, but we
+   probably want to give that as an option at some point *)
 (* coupling: ocaml_intf *)
 type frame = {name: string; filename: string; line: int; inlined: bool}
 
@@ -48,7 +56,7 @@ let stack_frame_of_slot (slot : Printexc.backtrace_slot) : frame option =
         ; filename= loc.filename
         ; line= loc.line_number
         ; inlined }
-  | __else__ ->
+  | None, None ->
       None
 
 let stack_frames_of_slots slots =

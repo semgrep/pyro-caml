@@ -20,12 +20,16 @@ impl Dune {
     }
 
     fn run(&self) {
+        // TODO: this builds every dune package in this repo everytime
+        // (including the ppx lib), we should make it only build the bindings
         let c = std::process::Command::new("dune")
             .current_dir(&self.root)
             .arg("build")
-            // -p enforces it to be a release/only build package necessary
+            // --root enforces dune to not search for a better dune project root
+            // if we don't do this dune freaks out when building via opam
             .arg("--root")
             .arg(".")
+            // for speed!
             .arg("--profile")
             .arg("release")
             .status()
@@ -53,6 +57,7 @@ impl Dune {
 }
 
 pub fn main() {
+    // ensure rebuild if dependent ocaml libraries change
     println!("cargo:rerun-if-changed=bindings");
     println!("cargo:rerun-if-changed=lib");
     Dune::new("bindings").build()

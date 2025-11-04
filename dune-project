@@ -7,6 +7,7 @@
 (source
  (github semgrep/pyro-caml))
 
+; with ocaml linking exception
 (license LGPL-2.1-only)
 
 (authors "Austin Theriault <austin@cutedogs.org>")
@@ -34,6 +35,14 @@
 (package
  (name pyro-caml)
  (synopsis "OCaml profiler with Pyroscope backend")
- (depends ocaml conf-rust-2024 pyro-caml-instruments))
+ (depends
+  ocaml
+  conf-rust-2024
+  pyro-caml-instruments
+; for some reason we can't not build every dune package in this repo including
+; the ppx package, when we build the rust binding via the cargo build system, so
+; this ensures the ppx has the deps it needs even though we don't use them
+  pyro-caml-ppx 
+  ))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

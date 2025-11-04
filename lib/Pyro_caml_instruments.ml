@@ -19,21 +19,36 @@ let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
 
 module Log = (val Logs.src_log src)
 
+(*****************************************************************************)
+(* Instrument side code *)
+(*****************************************************************************)
 (* check if OCAML_RUNTIME_EVENTS_START is set *)
-(* TODO check for more specifici env var? *)
+(* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
 let emit_point_event raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
+  (* Record the time via time of day so we can filter points by interval *)
+  (* TODO: use monotomic time + a faster call to get the time. I tried mtime but
+     that doesn't play well when linked into a rust program. Monotomic time
+     would be nice so if the user/system changes the time of day we aren't
+     screwed up, but for now we can assume that probably won't happen much*)
   let event = Point (Unix.gettimeofday (), raw_stack_trace) in
   emit_event event
 [@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
+  (* the only time we get the callstack is in alloc_minor + alloc_major. All of
+     these functions are called on their own stack so we can't use
+     Printexc.get_callstack in the other functions. Plus for some reason the
+     memprof backtraces seem way more comprehensive than those from
+     Printexc.get_callstack *)
   let alloc_minor {Gc.Memprof.callstack; _} =
-    emit_point_event callstack ; None
+    emit_point_event callstack ;
+    (* Don't care about tacking on any data to memory *)
+    None
   in
   let alloc_major {Gc.Memprof.callstack; _} =
     emit_point_event callstack ; None
@@ -43,6 +58,9 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
   let dealloc_major = Fun.id in
   {Gc.Memprof.alloc_minor; alloc_major; promote; dealloc_minor; dealloc_major}
 
+(* 1e-6 is nice but chosen somewhat randomly. Too high and you end up sending
+   too many points and overwhelming the profiler, too little and you don't get
+   enough info *)
 let with_memprof_sampler ?(sampling_rate = 1e-6) f =
   let memprof = Gc.Memprof.start ~sampling_rate tracker in
   Fun.protect
@@ -52,15 +70,19 @@ let with_memprof_sampler ?(sampling_rate = 1e-6) f =
 let maybe_with_memprof_sampler ?sampling_rate f =
   if is_enabled then with_memprof_sampler ?sampling_rate f else f ()
 
+(*****************************************************************************)
+(* Profiler code *)
+(*****************************************************************************)
 let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 let empty_callbacks = Runtime_events.Callbacks.create ()
 
+(* Minimize work we do in process event since the instrumented program can write
+   events quickly and so we need to keep pace while polling if we can *)
 let process_event now interval sample_points = function
   | Point (time, raw_st) ->
       if now -. time < interval then
-        let st = Stack_trace.t_of_raw_stack_trace raw_st in
-        sample_points := st :: !sample_points
+        sample_points := (time, raw_st) :: !sample_points
   | Partial _ ->
       ()
 
@@ -78,10 +100,22 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
         |> process_event now interval sample_points )
       callbacks
   in
+  (* TODO? Multithread this? *)
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
   let sample_points =
-    List.sort_uniq
-      (fun a b -> Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id)
-      !sample_points
+    !sample_points
+    |>
+    (* Sort points by whichever is closest to now. This ensures that even if a function
+     produces more samples because it has more allocations, we're still picking
+     the closest to the sample time *)
+    (* I wonder if it is worth weighting the sample point by how close it is to
+       the sample time. Additionally, it might be worth sending no sample if we
+       don't have a sample within 1ms or some other resolution of the sample
+       time *)
+    List.sort (fun (a_time, _) (b_time, _) ->
+        Float.compare (now -. a_time) (now -. b_time) )
+    |> List.map (fun (_, raw_st) -> Stack_trace.t_of_raw_stack_trace raw_st)
+    |> List.sort_uniq (fun a b ->
+           Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id )
   in
   sample_points
