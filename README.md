@@ -1,5 +1,5 @@
 # Pyro Caml 🔥 🐪
-Pyro Caml is a user level profiler for OCaml, that works with
+Pyro Caml is a profiler for OCaml, that works with
 [Pyroscope](https://pyroscope.io/) for statistical continuous profiling purely
 in user space.
 
