@@ -2,10 +2,10 @@
  (package pyro-caml-ppx)
  (name example)
  (public_name example)
- (libraries pyro-caml-instruments pyro-caml-ppx unix)
+ (libraries pyro-caml-instruments unix)
  (modes exe)
  (preprocess
-  (pps ppx_pyro_caml))
+  (pps ppx_pyro_caml --auto))
  (foreign_stubs
   (language c)
   (names example_stubs)

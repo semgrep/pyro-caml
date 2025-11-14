@@ -70,7 +70,7 @@ pub struct CamlSpy {
     ruleset: Arc<Mutex<Ruleset>>,
     backend_config: Arc<Mutex<BackendConfig>>,
     config: CamlSpyConfig,
-    sampler_thread: Option<JoinHandle<Result<()>>>,
+    sampler_thread: Option<JoinHandle<()>>,
 }
 
 impl CamlSpy {
@@ -126,12 +126,18 @@ impl Backend for CamlSpy {
             log::debug!(target:LOG_TAG, "starting sampler thread");
             while running.load(Ordering::Relaxed) {
                 log::trace!(target:LOG_TAG, "acquiring backend config and cursor");
-                let backend_config = backend_config.lock()?;
+                let backend_config = backend_config
+                    .lock()
+                    .expect("Could not take backend config lock");
 
                 let cursor = config.acquire_cursor();
                 log::trace!(target:LOG_TAG, "sampling...");
                 let mut stack_frames: Vec<StackTrace> = OCAML_GC
-                    .with_borrow(|gc| ocaml_intf::read_poll(gc, cursor, config.sample_interval()))?
+                    .with_borrow(|gc| ocaml_intf::read_poll(gc, cursor, config.sample_interval()))
+                    .unwrap_or_else(|e| {
+                        log::error!(target:LOG_TAG, "Error reading from OCaml runtime: {:?}", e);
+                        vec![]
+                    })
                     .into_iter()
                     .map(|st| st.into_stack_trace(backend_config.deref(), config.pid))
                     .collect();
@@ -145,8 +151,12 @@ impl Backend for CamlSpy {
 
                 log::trace!(target:LOG_TAG, "recording stack frames");
                 for st in stack_frames.into_iter() {
-                    let stack_trace = st + &ruleset.lock()?.clone();
-                    buffer.lock()?.record(stack_trace).unwrap();
+                    let stack_trace = st + &ruleset.lock().expect("Failed to lock ruleset").clone();
+                    buffer
+                        .lock()
+                        .expect("Failed to lock buffer")
+                        .record(stack_trace)
+                        .expect("Failed to record stack traces to buffer");
                 }
                 log::trace!(target:LOG_TAG, "recorded stack trace");
                 log::trace!(target:LOG_TAG, "sleeping for {} ms", 1000 / config.sample_rate);
@@ -155,8 +165,7 @@ impl Backend for CamlSpy {
                     1000 / config.sample_rate as u64,
                 ));
             }
-            log::debug!(target:LOG_TAG, "sampler thread exiting");
-            Ok(())
+            log::debug!(target:LOG_TAG, "sampler thread exiting")
         });
         self.sampler_thread = Some(sampler);
         Ok(())
@@ -168,15 +177,23 @@ impl Backend for CamlSpy {
         self.sampler_thread
             .ok_or_else(|| PyroscopeError::new("CamlSpy: Failed to unwrap sampler thread"))?
             .join()
-            .unwrap_or_else(|_| {
-                Err(PyroscopeError::new(
-                    "CamlSpy: Failed to join sampler thread",
-                ))
+            .map_err(|e| {
+                PyroscopeError::new(
+                    format!("CamlSpy: Failed to join sampler thread: {:?}", e).as_str(),
+                )
             })?;
         Ok(())
     }
 
     fn report(&mut self) -> Result<Vec<Report>> {
+        // first check if the thread has finished
+        if let Some(handle) = &self.sampler_thread {
+            if handle.is_finished() {
+                return Err(PyroscopeError::new(
+                    "CamlSpy: Sampler thread has exited unexpectedly",
+                ));
+            }
+        }
         let report: StackBuffer = self.buffer.lock()?.deref().to_owned();
         let reports: Vec<Report> = report.into();
 

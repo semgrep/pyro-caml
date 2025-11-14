@@ -16,7 +16,6 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-
 let example_func2 () =
   My_module.do_short_thing () ;
   My_module.alloc_thing ()
@@ -32,18 +31,10 @@ let () =
   @@ fun () ->
   Printf.printf "Starting loop\n" ;
   flush_all () ;
-  let[@pyro_profile] do_main_thing () =
-    let i = 0 in
-    while i < 1 do
+  let do_main_thing () =
+    while true do
       example_func () ; example_func3 () ; example_func () ; example_func3 ()
     done
   in
-  let d1 = Domain.spawn (fun () -> do_main_thing ()) in
-  let d2 = Domain.spawn (fun () -> do_main_thing ()) in
-  let d3 = Domain.spawn (fun () -> do_main_thing ()) in
-  let d4 = Domain.spawn (fun () -> do_main_thing ()) in
-  do_main_thing () ;
-  Domain.join d1 ;
-  Domain.join d2 ;
-  Domain.join d3 ;
-  Domain.join d4
+  let domains = List.init 8 (fun _ -> Domain.spawn (fun () -> do_main_thing ())) in
+  List.iter Domain.join domains
