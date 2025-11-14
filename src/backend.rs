@@ -96,7 +96,6 @@ impl Backend for CamlSpy {
     }
 
     fn sample_rate(&self) -> Result<u32> {
-        log::debug!(target:LOG_TAG, "request sample rate");
         Ok(self.config.sample_rate)
     }
 

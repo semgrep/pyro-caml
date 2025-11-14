@@ -25,6 +25,11 @@ impl From<CamlIntfError> for PyroscopeError {
 impl From<ocaml::Error> for CamlIntfError {
     fn from(err: ocaml::Error) -> Self {
         if let ocaml::Error::Caml(ocaml::CamlError::Exception(exc)) = &err {
+            // # Safety
+            // exc.exception_to_string() is unsafe because it may dereference
+            // a raw pointer inside the ocaml runtime. However, since we have
+            // an &Runtime in the call stack, we assume the caller has ensured
+            // the runtime is valid. (I think)
             match unsafe { exc.exception_to_string() } {
                 Ok(s) => CamlIntfError(format!("Ocaml exception: {}", s)),
                 Err(utf8error) => CamlIntfError(format!(
@@ -98,10 +103,22 @@ pub fn read_poll(
     cursor: Cursor,
     interval: f64,
 ) -> Result<Vec<CamlStackTrace>, CamlIntfError> {
+    // # Safety
+    //
+    // it is unclear why this function is unsafe from the ocaml-rs docs
+    // but we assume the caller must ensure the gc is valid, and we conver the
+    // path and int for the caller, so there is no risk they coerced a bad
+    // value into an ocaml::Value
     Ok(unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float) }?.into_vec())
 }
 
 pub fn create_cursor(gc: &Runtime, path: &Path, pid: u32) -> Cursor {
+    // Safety
+    //
+    // it is unclear why this function is unsafe from the ocaml-rs docs but we
+    // assume the caller must ensure the gc is valid, and we conver the path and
+    // int for the caller, so there is no risk they coerced a bad value into an
+    // ocaml::Value
     unsafe { create_cursor_ml(gc, path.to_str().unwrap().to_string(), pid as ocaml::Int) }
         .expect("failed to create cursor")
 }
