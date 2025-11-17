@@ -110,7 +110,7 @@ let emit_point_id loc =
   let var e = var e loc in
   let enter = "Pyro_caml_instruments.emit_point_event" in
   let record_cs = "Printexc.get_callstack" in
-  let max_int = "max_int" in
+  let max_int = "Pyro_caml_instruments.max_callstack" in
   Exp.apply (var enter)
     [(Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)])]
 

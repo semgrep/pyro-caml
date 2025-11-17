@@ -19,6 +19,7 @@ let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
 
 module Log = (val Logs.src_log src)
 
+let max_callstack = 1024
 (*****************************************************************************)
 (* Instrument side code *)
 (*****************************************************************************)

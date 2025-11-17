@@ -1,3 +1,6 @@
+val max_callstack : int
+(** [max_callstacks] is the maximum size of callstacks *)
+
 val with_memprof_sampler : ?sampling_rate:float -> (unit -> 'a) -> 'a
 (** [with_memprof_sampler ?sampling_rate f] enables the Pyro Caml sampler for
     the duration of [f]. An optional [sampling_rate] can be passed which will be
