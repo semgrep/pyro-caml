@@ -26,6 +26,8 @@ module Log = (val Logs.src_log src)
 (* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
+let time_of_day = Unix.gettimeofday ()
+
 let emit_point_event raw_backtrace =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
@@ -35,7 +37,7 @@ let emit_point_event raw_backtrace =
      that doesn't play well when linked into a rust program. Monotomic time
      would be nice so if the user/system changes the time of day we aren't
      screwed up, but for now we can assume that probably won't happen much*)
-  let event = Point (Unix.gettimeofday (), raw_stack_trace) in
+  let event = Point (time_of_day, raw_stack_trace) in
   emit_event event
 [@@inline always]
 
