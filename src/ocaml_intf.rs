@@ -106,7 +106,7 @@ pub fn read_poll(
     // # Safety
     //
     // it is unclear why this function is unsafe from the ocaml-rs docs
-    // but we assume the caller must ensure the gc is valid, and we conver the
+    // but we assume the caller must ensure the gc is valid, and we convert the
     // path and int for the caller, so there is no risk they coerced a bad
     // value into an ocaml::Value
     Ok(unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float) }?.into_vec())
