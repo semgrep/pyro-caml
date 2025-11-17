@@ -123,9 +123,9 @@ fn make_agent_builder(
 fn main() {
     let cli = Cli::parse();
 
-    // there is probably a better way to do this
-    unsafe { std::env::set_var("RUST_LOG", cli.verbosity.log_level_filter().to_string()) };
-    pretty_env_logger::init_timed();
+    pretty_env_logger::formatted_timed_builder()
+        .filter_level(cli.verbosity.log_level_filter())
+        .init();
 
     let bin = cli.binary;
     let args = cli.args;
