@@ -1,0 +1,13 @@
+profile = conventional
+
+# Preserve begin/end or parentheses to group expressions. Discussed November
+# 2024 with mixed opinions. Some prefer the consistency of always using
+# parentheses. Others find it easier to visually parse large blocks when
+# delimited by begin/end. For now we'll relax the constraints and let people
+# experiment. We can easily move back to enforcing parens only if we want to.
+exp-grouping = preserve
+
+# Docstrings are supposed to be structured and parsable. We don't use them
+# properly, which makes ocamlformat 0.27.0 sad. Disable docstring parsing until
+# we get it together.
+parse-docstrings = false

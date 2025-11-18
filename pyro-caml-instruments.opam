@@ -12,6 +12,7 @@ depends: [
   "ocaml"
   "logs"
   "digestif"
+  "ppx_deriving"
   "odoc" {with-doc}
 ]
 build: [
