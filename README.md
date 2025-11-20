@@ -3,6 +3,65 @@ Pyro Caml is a profiler for OCaml that works with
 [Pyroscope](https://pyroscope.io/) for statistical continuous profiling purely
 in user space.
 
+# How it works
+## Architecture
+Pyro Caml work by generating samples consisting of OCaml callstacks within the
+instrumented program. These samples are then written to a ring buffer via the
+[OCaml Runtime Events tracing
+system](https://ocaml.org/manual/5.3/runtime-tracing.html) introduce in OCaml 5.
+Finally the Pyro Caml program, which is written in Rust in order to utilize
+[pyroscope-rs](https://github.com/grafana/pyroscope-rs), uses ocaml-rs to read
+from this ring buffer, process the callstacks, and then send the resulting
+profile with metadata to a Pyroscope instance.
+
+## Collecting and processing samples
+Pyro Caml generates samples one of two ways, either via
+[Memprof](https://ocaml.org/manual/5.3/api/Gc.Memprof.html) or by explicitly
+emitting a sample. Memprof passes a callstack as a callback argument for any
+allocation it samples, which is what's used to produce a sample in that case.
+These callstacks get combined with metadata indicating when the sample was
+taken, and which domain it was generated from, to form a sample. If the
+resulting sample is too large to fit in a single runtime event, as there is a
+1024 byte payload limit, they will be conditionally broken up into smaller
+parts.
+
+On the Pyro Caml collector side, at regular intervals indicated by the sample
+rate will read these samples. If it receives any sample parts it will recombine
+them into a whole sample. We then choose a single sample from each domain, in
+order to form a complete picture of the instrumented program's callstack at a
+single moment in time.
+
+Notably, we are reading samples that may not all occur at a single moment in
+time. This means we cannot use the samples as is, as Memprof samples will be
+weighted towards where the program allocates most, and manually emitted samples
+will be weighted towards where the sample is emitted. To deal with this, we try
+to generate as many samples as we can without introducing significant overhead.
+This means for a given sample interval, we have many possible samples to choose
+from, which allows us to choose a sample timestamped sufficiently close to the
+single point in time we want to generate a complete callstack for. The downside
+here is that for programs that don't emit many samples, we lose accuracy for
+function calls that last less than the time of the sample interval.
+
+Consider this example program, that we are sampling at a rate of 100 times a
+second (the default for Pyro Caml):
+
+![example program](./images/d1.png)
+
+Say we're sampling at time `t+10`. No matter where we generate a sample in for
+the sample interval `[(t+0),(t+10)]` will include `func_a` in the callstack, as
+the duration of `func_a` is greater than the sample interval. Assuming `func_c`
+allocates sufficient memory and the Memprof sample rate is high enough, or it
+explicitly emits a sample, it will generate a sample, meaning that this function
+will also be included in the callstack. This means that although `func_c`'s
+duration is shorter than `func_b`, we have generated a callstack that is
+identical to a snapshot of the callstack at a single instant in time.
+
+If `func_c` did not generate a sample, and `func_b` did, our callstack differs
+from the callstack at a single instant in time, resulting in a less accurate
+sample. Formal testing still needs to be done, but we've found that most OCaml
+programs allocate enough that this case rarely happens, and functions that
+rarely allocate can be modified to explicitly emit samples.
+
 # How to use
 Pyro Caml consists of three parts, the instrumentation library, the profiler,
 and a helpful PPX. The instrumentation and PPX libraries has no dependencies on
