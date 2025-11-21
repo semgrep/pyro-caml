@@ -7,7 +7,7 @@
 (source
  (github semgrep/pyro-caml))
 
-; with ocaml linking exception
+; with ocaml linking exception?
 (license LGPL-2.1-only)
 
 (authors "Austin Theriault <austin@cutedogs.org>")
@@ -17,7 +17,7 @@
 (package
  (name pyro-caml-instruments)
  (synopsis "Pyroscope + OCaml = Pyro Caml")
- (depends ocaml logs digestif)
+ (depends ocaml logs digestif ppx_deriving)
  (tags ("profiling")))
 
 (package
