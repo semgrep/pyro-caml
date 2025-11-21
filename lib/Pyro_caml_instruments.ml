@@ -45,18 +45,19 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
      Printexc.get_callstack in the other functions. Plus for some reason the
      memprof backtraces seem way more comprehensive than those from
      Printexc.get_callstack *)
-  let alloc_minor {Gc.Memprof.callstack; _} =
-    emit_point_event callstack ;
+  let alloc_minor { Gc.Memprof.callstack; _ } =
+    emit_point_event callstack;
     (* Don't care about tacking on any data to memory *)
     None
   in
-  let alloc_major {Gc.Memprof.callstack; _} =
-    emit_point_event callstack ; None
+  let alloc_major { Gc.Memprof.callstack; _ } =
+    emit_point_event callstack;
+    None
   in
   let promote () = None in
   let dealloc_minor = Fun.id in
   let dealloc_major = Fun.id in
-  {Gc.Memprof.alloc_minor; alloc_major; promote; dealloc_minor; dealloc_major}
+  { Gc.Memprof.alloc_minor; alloc_major; promote; dealloc_minor; dealloc_major }
 
 (* 1e-6 is nice but chosen somewhat randomly. Too high and you end up sending
    too many points and overwhelming the profiler, too little and you don't get
@@ -64,7 +65,9 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
 let with_memprof_sampler ?(sampling_rate = 1e-6) f =
   let memprof = Gc.Memprof.start ~sampling_rate tracker in
   Fun.protect
-    ~finally:(fun () -> Gc.Memprof.stop () ; Gc.Memprof.discard memprof)
+    ~finally:(fun () ->
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard memprof)
     f
 
 let maybe_with_memprof_sampler ?sampling_rate f =
@@ -74,7 +77,6 @@ let maybe_with_memprof_sampler ?sampling_rate f =
 (* Profiler code *)
 (*****************************************************************************)
 let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
-
 let empty_callbacks = Runtime_events.Callbacks.create ()
 
 (* Minimize work we do in process event since the instrumented program can write
@@ -83,8 +85,7 @@ let process_event now interval sample_points = function
   | Point (time, raw_st) ->
       if now -. time < interval then
         sample_points := (time, raw_st) :: !sample_points
-  | Partial _ ->
-      ()
+  | Partial _ -> ()
 
 let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
     interval =
@@ -97,7 +98,7 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
            _event_t (e : marshaled) ->
         e
         |> event_of_perf_event event_buffer
-        |> process_event now interval sample_points )
+        |> process_event now interval sample_points)
       callbacks
   in
   (* TODO? Multithread this? *)
@@ -113,9 +114,9 @@ let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
        don't have a sample within 1ms or some other resolution of the sample
        time *)
     List.sort (fun (a_time, _) (b_time, _) ->
-        Float.compare (now -. a_time) (now -. b_time) )
+        Float.compare (now -. a_time) (now -. b_time))
     |> List.map (fun (_, raw_st) -> Stack_trace.t_of_raw_stack_trace raw_st)
     |> List.sort_uniq (fun a b ->
-           Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id )
+           Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id)
   in
   sample_points

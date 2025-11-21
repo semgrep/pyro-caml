@@ -26,11 +26,12 @@ module Hash = Digest.MD5
    profiler *)
 type t =
   | Point of (float * Stack_trace.raw_stack_trace)
-  | Partial of {id: Hash.t; bytes: Bytes.t; part: int; part_count: int}
+  | Partial of { id : Hash.t; bytes : Bytes.t; part : int; part_count : int }
 
 type marshaled = bytes * int
 
-let make_partial id part_count part bytes = Partial {id; bytes; part; part_count}
+let make_partial id part_count part bytes =
+  Partial { id; bytes; part; part_count }
 
 let split_bytes bytes size =
   let rec aux offset parts =
@@ -55,7 +56,7 @@ let marshal_event ?(max_size = 800) e =
   let marshaled_event, len = marshal e in
   (* Max size of runtime event type payload *)
   (* https://ocaml.org/manual/5.3/api/Runtime_events.Type.html *)
-  if len <= 1024 then [(marshaled_event, len)]
+  if len <= 1024 then [ (marshaled_event, len) ]
   else
     (* if it's bigger split it up! *)
     let id = Hash.bytes marshaled_event in
@@ -73,7 +74,7 @@ type Runtime_events.User.tag += Perf_event_tag
 
 let perf_event_type =
   let encode (bytes : bytes) ((marshaled, len) : marshaled) : int =
-    Bytes.blit marshaled 0 bytes 0 len ;
+    Bytes.blit marshaled 0 bytes 0 len;
     len
   in
   let decode (bytes : bytes) (len : int) : marshaled = (bytes, len) in
@@ -99,13 +100,11 @@ type event_buffer = (Hash.t, (int * Bytes.t) list) Hashtbl.t
 let event_of_perf_event buffer (marshaled, _) : t =
   let event = Marshal.from_bytes marshaled 0 in
   match event with
-  | Partial {id; bytes; part_count; part} ->
+  | Partial { id; bytes; part_count; part } ->
       let parts =
         match Hashtbl.find_opt buffer id with
-        | Some parts ->
-            (part, bytes) :: parts
-        | None ->
-            [(part, bytes)]
+        | Some parts -> (part, bytes) :: parts
+        | None -> [ (part, bytes) ]
       in
       let parts =
         List.sort_uniq (fun (id1, _) (id2, _) -> Int.compare id1 id2) parts
@@ -118,16 +117,15 @@ let event_of_perf_event buffer (marshaled, _) : t =
                  let new_acc =
                    Bytes.create (Bytes.length acc + Bytes.length bytes)
                  in
-                 Bytes.blit acc 0 new_acc 0 (Bytes.length acc) ;
+                 Bytes.blit acc 0 new_acc 0 (Bytes.length acc);
                  Bytes.blit bytes 0 new_acc (Bytes.length acc)
-                   (Bytes.length bytes) ;
-                 new_acc )
+                   (Bytes.length bytes);
+                 new_acc)
                (Bytes.create 0)
         in
-        Hashtbl.remove buffer id ;
-        Marshal.from_bytes full_bytes 0 )
+        Hashtbl.remove buffer id;
+        Marshal.from_bytes full_bytes 0)
       else (
-        Hashtbl.replace buffer id parts ;
-        event )
-  | _ ->
-      event
+        Hashtbl.replace buffer id parts;
+        event)
+  | _ -> event

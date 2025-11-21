@@ -44,31 +44,26 @@ let raw_stack_trace_of_backtrace bt : raw_stack_trace =
    probably want to give that as an option at some point *)
 (* coupling: ocaml_intf *)
 type frame = {
-  name : string;
-  filename : string;
-  line : int;
+  name : string option;
+  filename : string option;
+  line : int option;
   inlined : bool; [@eq.skip]
       (* We really don't care about if a function is inlined for equality*)
 }
 [@@deriving eq]
 
-let stack_frame_of_slot (slot : Printexc.backtrace_slot) : frame option =
-  let loc = Printexc.Slot.location slot in
+let other_frame =
+  { name = Some "other"; filename = None; line = None; inlined = false }
+
+let stack_frame_of_slot (slot : Printexc.backtrace_slot) : frame =
+  let filename, line =
+    match Printexc.Slot.location slot with
+    | Some loc -> (Some loc.filename, Some loc.line_number)
+    | None -> (None, None)
+  in
   let name = Printexc.Slot.name slot in
   let inlined = Printexc.Slot.is_inline slot in
-  match (loc, name) with
-  | Some loc, Some name ->
-      Some { name; filename = loc.filename; line = loc.line_number; inlined }
-  | None, Some name -> Some { name; filename = "<unknown>"; line = 0; inlined }
-  | Some loc, None ->
-      Some
-        {
-          name = "<unknown>";
-          filename = loc.filename;
-          line = loc.line_number;
-          inlined;
-        }
-  | None, None -> None
+  { name; filename; line; inlined }
 
 (* Looking ahead by up to 3 can be useful for recursive functions to make them
    much more legible. E.g. List.map can be very recursive, and pyroscope has a
@@ -90,7 +85,7 @@ let compress frames =
   aux [] frames
 
 let stack_frames_of_slots slots =
-  slots |> List.filter_map stack_frame_of_slot |> compress
+  slots |> List.map stack_frame_of_slot |> compress
 
 (*****************************************************************************)
 (* Stack traces *)

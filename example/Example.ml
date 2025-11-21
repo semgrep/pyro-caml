@@ -17,7 +17,7 @@
 (* Prelude *)
 (*****************************************************************************)
 let example_func2 () =
-  My_module.do_short_thing () ;
+  My_module.do_short_thing ();
   My_module.alloc_thing ()
 
 let example_func () =
@@ -27,14 +27,18 @@ let example_func () =
 let example_func3 () = My_module.do_long_thing ()
 
 let () =
-  Pyro_caml_instruments.with_memprof_sampler
-  @@ fun () ->
-  Printf.printf "Starting loop\n" ;
-  flush_all () ;
+  Pyro_caml_instruments.with_memprof_sampler @@ fun () ->
+  Printf.printf "Starting loop\n";
+  flush_all ();
   let do_main_thing () =
     while true do
-      example_func () ; example_func3 () ; example_func () ; example_func3 ()
+      example_func ();
+      example_func3 ();
+      example_func ();
+      example_func3 ()
     done
   in
-  let domains = List.init 8 (fun _ -> Domain.spawn (fun () -> do_main_thing ())) in
+  let domains =
+    List.init 8 (fun _ -> Domain.spawn (fun () -> do_main_thing ()))
+  in
   List.iter Domain.join domains

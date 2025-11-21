@@ -37,3 +37,8 @@ shell:
 	nix develop .
 
 release: vendor build-release
+
+# helpful for testing pyroscope integration
+.PHONY: pyroscope
+pyroscope:
+	docker run --rm -it -p 4040:4040 grafana/pyroscope:latest

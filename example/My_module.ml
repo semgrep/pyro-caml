@@ -17,7 +17,7 @@
 (* Prelude *)
 (*****************************************************************************)
 
-type t = {x: int; y: string}
+type t = { x : int; y : string }
 
 external comp_and_callback : (unit -> unit) -> unit = "ml_comp_and_callback"
 
@@ -27,17 +27,22 @@ let f x y z =
   let c = b - y in
   c
 
+let rec non_tail_recursive_fold_right f lst acc =
+  match lst with
+  | [] -> acc
+  | x :: xs -> f x (non_tail_recursive_fold_right f xs acc)
 
 let alloc_thing () =
   let random_list =
-    List.init 1000 (fun _ ->
-        {x= Random.int 100000; y= string_of_int (Random.int 100000)} )
+    List.init 2048 (fun _ ->
+        { x = Random.int 100000; y = string_of_int (Random.int 100000) })
   in
   let _sorted = List.sort compare random_list in
-  List.iter
-    (fun x ->
-      if f x.x (String.length x.y) 100 mod 10 = 10000000000 then assert false )
-    random_list
+  non_tail_recursive_fold_right
+    (fun x acc ->
+      if f x.x (String.length x.y) 100 mod 10 = 42 then assert false;
+      acc)
+    random_list ()
 
 class stack_of_ints =
   object (_self)
@@ -50,7 +55,7 @@ class stack_of_ints =
     method pop =
       (* pop method *)
       let result = List.hd the_list in
-      the_list <- List.tl the_list ;
+      the_list <- List.tl the_list;
       result
 
     method peek =
@@ -66,19 +71,19 @@ let do_thing () =
   let stack = new stack_of_ints in
   for _i = 1 to 1000 do
     stack#push (Random.int 100000)
-  done ;
+  done;
   while stack#size > 0 do
     let _ = stack#pop in
     ()
-  done ;
+  done;
   alloc_thing ()
 
 let do_short_thing () = alloc_thing ()
 
 let do_long_thing () =
-  alloc_thing () ;
-  alloc_thing () ;
-  alloc_thing () ;
+  alloc_thing ();
+  alloc_thing ();
+  alloc_thing ();
   comp_and_callback alloc_thing
 
 (* Example object *)

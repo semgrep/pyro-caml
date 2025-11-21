@@ -15,10 +15,9 @@
 (* Bindings for the pyro-caml binary to the pyro caml instrumentation library *)
 
 let read_poll cursor interval = Pyro_caml_instruments.read_poll cursor interval
-
 let create_cursor = Pyro_caml_instruments.create_cursor
 
 let () =
   (* Register them for binding into rust *)
-  Callback.register "read_poll_ml" read_poll ;
+  Callback.register "read_poll_ml" read_poll;
   Callback.register "create_cursor_ml" create_cursor
