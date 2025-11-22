@@ -15,10 +15,6 @@
 
 open Event
 
-let src = Logs.Src.create "pyro_caml" ~doc:"Pyro Caml"
-
-module Log = (val Logs.src_log src)
-
 (*****************************************************************************)
 (* Instrument side code *)
 (*****************************************************************************)
@@ -35,8 +31,8 @@ let emit_point_event raw_backtrace =
      that doesn't play well when linked into a rust program. Monotomic time
      would be nice so if the user/system changes the time of day we aren't
      screwed up, but for now we can assume that probably won't happen much*)
-  let event = Point (Unix.gettimeofday (), raw_stack_trace) in
-  emit_event event
+  let point = (Unix.gettimeofday (), raw_stack_trace) in
+  emit_point point
 [@@inline always]
 
 let tracker : (unit, unit) Gc.Memprof.tracker =
@@ -77,28 +73,33 @@ let maybe_with_memprof_sampler ?sampling_rate f =
 (* Profiler code *)
 (*****************************************************************************)
 let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
-let empty_callbacks = Runtime_events.Callbacks.create ()
 
 (* Minimize work we do in process event since the instrumented program can write
    events quickly and so we need to keep pace while polling if we can *)
-let process_event now interval sample_points = function
-  | Point (time, raw_st) ->
+let process_point now interval sample_points = function
+  | Some (time, raw_st) ->
       if now -. time < interval then
         sample_points := (time, raw_st) :: !sample_points
-  | Partial _ -> ()
+  | None -> ()
 
-let read_poll ?(max_events = None) ?(callbacks = empty_callbacks) cursor
-    interval =
-  let event_buffer = Hashtbl.create 1000 in
+let read_poll ?(max_events = None) cursor interval =
+  let point_buffer = Hashtbl.create 1000 in
   let now = Unix.gettimeofday () in
   let sample_points = ref [] in
   let callbacks =
+    Runtime_events.Callbacks.create
+      ~lost_events:(fun (ring_buffer_index : int) (_num_lost : int) ->
+        (* If we've lost events clear that ring buffer's event buffer *)
+        Hashtbl.remove point_buffer ring_buffer_index)
+      ()
+  in
+  let callbacks =
     Runtime_events.Callbacks.add_user_event perf_event_type
-      (fun (_ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t)
-           _event_t (e : marshaled) ->
+      (fun (ring_buffer_index : int) (_ts : Runtime_events.Timestamp.t) _event_t
+           (e : marshaled) ->
         e
-        |> event_of_perf_event event_buffer
-        |> process_event now interval sample_points)
+        |> process_perf_event ring_buffer_index point_buffer
+        |> process_point now interval sample_points)
       callbacks
   in
   (* TODO? Multithread this? *)

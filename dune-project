@@ -17,7 +17,7 @@
 (package
  (name pyro-caml-instruments)
  (synopsis "Pyroscope + OCaml = Pyro Caml")
- (depends ocaml logs digestif ppx_deriving)
+ (depends ocaml logs ppx_deriving)
  (tags ("profiling")))
 
 (package
