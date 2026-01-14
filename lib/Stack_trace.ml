@@ -19,6 +19,9 @@
 
 type slot = Printexc.backtrace_slot
 
+(* How many frames to send *)
+let max_stack_depth = 1023
+
 let equal_slot s1 s2 =
   let name_eq =
     Option.equal String.equal (Printexc.Slot.name s1) (Printexc.Slot.name s2)
@@ -65,22 +68,30 @@ type raw_stack_trace = {
   slots : slot list;
   domain_id : int;
   thread_name : string;
+  truncated : bool;
 }
 
-let raw_stack_trace_of_backtrace bt : raw_stack_trace =
+let raw_stack_trace_of_backtrace ?(max_depth = max_stack_depth) bt :
+    raw_stack_trace =
   (* Use the domain as the ID since runtime event sampling happens per domain *)
   (* TODO? also somehow include thread id *)
   let did = (Domain.self () :> int) in
-  (* Nice to call it main but probably not necessary *)
-  let name = if Domain.is_main_domain () then "main" else string_of_int did in
+  let name = string_of_int did in
   (* if there aren't any slots then not much we can do *)
   let slots =
-    bt
-    |> Printexc.(backtrace_slots)
-    |> Option.map compress_slot_array
+    bt |> Printexc.(backtrace_slots) |> Option.map compress_slot_array
+  in
+  (* Pyroscope has a max stack depth of 1024. There's no reason to spend compute
+     time processing frames that will get truncated anyways *)
+  let truncated =
+    match slots with Some lst -> List.length lst > max_depth | None -> false
+  in
+  let slots =
+    slots
+    |> Option.map (fun lst -> List.take max_depth lst)
     |> Option.value ~default:[]
   in
-  { slots; domain_id = did; thread_name = name }
+  { slots; domain_id = did; thread_name = name; truncated }
 
 (*****************************************************************************)
 (* Stack frames *)
@@ -121,6 +132,10 @@ type t = { frames : frame list; thread_id : int; thread_name : string }
 
 let t_of_raw_stack_trace raw_stack_trace =
   let frames = stack_frames_of_slots raw_stack_trace.slots in
+  (* this is what pyro caml expects if the stack trace has been truncated *)
+  let frames =
+    if raw_stack_trace.truncated then frames @ [ other_frame ] else frames
+  in
   {
     frames;
     thread_id = raw_stack_trace.domain_id;
