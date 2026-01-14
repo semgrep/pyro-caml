@@ -1,7 +1,7 @@
 (library
  (name pyro_caml_instruments)
  (public_name pyro-caml-instruments)
- (libraries runtime_events unix logs digestif)
+ (libraries runtime_events unix logs)
  (preprocess
   (pps ppx_deriving.eq))
  (instrumentation.backend

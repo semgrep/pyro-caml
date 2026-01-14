@@ -16,22 +16,17 @@
 (*****************************************************************************)
 (* Event *)
 (*****************************************************************************)
-(* md5 feels fast and safe enough *)
-module Hash = Digest.MD5
 
-(* an event is either a point or partial. We have a notion of a partial event
-   since runtime events only support payloads of max 1024 bytes, and any larger
-   will raise an exception. Since some callstacks can be LARGE!! we break up the
+(* runtime events only support payloads of max 1024 bytes, and any larger will
+   raise an exception. Since some callstacks can be LARGE!! we break up the
    callstack into a multipart message that is then reassembled by the
-   profiler *)
-type t =
-  | Point of (float * Stack_trace.raw_stack_trace)
-  | Partial of { id : Hash.t; bytes : Bytes.t; part : int; part_count : int }
+   profiler. *)
+type t = { bytes : Bytes.t; part : int; part_count : int }
 
+(* The actual underlying data we're transmitting, a stack trace with a
+   timestamp *)
+type point = float * Stack_trace.raw_stack_trace
 type marshaled = bytes * int
-
-let make_partial id part_count part bytes =
-  Partial { id; bytes; part; part_count }
 
 let split_bytes bytes size =
   let rec aux offset parts =
@@ -44,27 +39,23 @@ let split_bytes bytes size =
   aux 0 []
 
 let marshal e =
-  let marshaled_event = Marshal.to_bytes e [] in
-  let len = Bytes.length marshaled_event in
-  (marshaled_event, len)
+  let marshaled_obj = Marshal.to_bytes e [] in
+  let len = Bytes.length marshaled_obj in
+  (marshaled_obj, len)
 
-(* 800 is chosen since when we break the event up into a partial event, we need
+(* 900 is chosen since when we break the event up into a partial event, we need
    to save some room for the other parts of the Partial data structure besides
    the bytes*)
 (* TODO be more clever about max size *)
-let marshal_event ?(max_size = 800) e =
-  let marshaled_event, len = marshal e in
-  (* Max size of runtime event type payload *)
+let marshal_point ?(max_size = 900) (p : point) =
+  let marshaled_point, _len = marshal p in
+  (* Max size of runtime event type payload is 1024, but we want to stay
+     slightly under that so we can store metadata about which part this is *)
   (* https://ocaml.org/manual/5.3/api/Runtime_events.Type.html *)
-  if len <= 1024 then [ (marshaled_event, len) ]
-  else
-    (* if it's bigger split it up! *)
-    let id = Hash.bytes marshaled_event in
-    let parts = split_bytes marshaled_event max_size in
-    let mk_part part part_bytes =
-      make_partial id (List.length parts) part part_bytes
-    in
-    parts |> List.mapi (fun i part_bytes -> marshal (mk_part i part_bytes))
+  let parts = split_bytes marshaled_point max_size in
+  let part_count = List.length parts in
+  let mk_part part part_bytes = { bytes = part_bytes; part; part_count } in
+  parts |> List.mapi (fun i part_bytes -> marshal (mk_part i part_bytes))
 
 (*****************************************************************************)
 (* Perf event *)
@@ -83,49 +74,70 @@ let perf_event_type =
 let perf_event =
   Runtime_events.User.register "Perf_event" Perf_event_tag perf_event_type
 
-let emit_event e =
-  let marshaled_events = marshal_event e in
+let emit_point (p : point) =
+  let marshaled_events = marshal_point p in
   List.iter
     (fun marshaled -> Runtime_events.User.write perf_event marshaled)
     marshaled_events
 [@@inline always]
 
-(* buffer for storing partial events so we can then rebuild them  *)
-type event_buffer = (Hash.t, (int * Bytes.t) list) Hashtbl.t
+(* buffer for storing partial points so we can then rebuild them  *)
+(* of type (ring_id, point parts) *)
+type point_buffer = (int, (int * Bytes.t) list) Hashtbl.t
 
-(* event_of_perf event will keep track of partial events and spit them out as
-   normal events if it finds all the parts *)
-(* TODO this would probably make more sense if it spit out Point option or
-   similar? *)
-let event_of_perf_event buffer (marshaled, _) : t =
+(** [event_of_perf_event ring_buffer_index buffer event] collects marshaled
+    events, and re-assembles them into points. Since the points are split into
+    parts, we return [None] if there was not enough parts to reconstruct a
+    point, or [Some point] if there were.
+
+    The runtime events file we read in has a unique ring buffer for each domain
+    ([ring_buffer_index]). Events are written to this buffer in order. This means
+    we can assume that the parts will come be read in order (e.g. ring 1 part 1,
+    ring 1 part 2 ...). We collect these parts to form the final point. If we
+    receive an out of order part, the last part in a point, or lose runtime events
+    in a ring buffer, we reset our point buffer *)
+let process_perf_event ring_buffer_index buffer (marshaled, _) : point option =
   let event = Marshal.from_bytes marshaled 0 in
+  let ring_parts =
+    match Hashtbl.find_opt buffer ring_buffer_index with
+    | Some parts -> parts
+    | None -> []
+  in
   match event with
-  | Partial { id; bytes; part_count; part } ->
-      let parts =
-        match Hashtbl.find_opt buffer id with
-        | Some parts -> (part, bytes) :: parts
-        | None -> [ (part, bytes) ]
-      in
-      let parts =
-        List.sort_uniq (fun (id1, _) (id2, _) -> Int.compare id1 id2) parts
-      in
-      if List.length parts = part_count then (
+  (* Don't store in buffer if we can immediately unmarshal *)
+  | { bytes; part_count; _ } when part_count = 1 ->
+      (* Also clear out the buffer just in case *)
+      Hashtbl.remove buffer ring_buffer_index;
+      Some (Marshal.from_bytes bytes 0)
+  (* If we don't have any parts, and receive something besides the start part,
+     just wait for the next start part*)
+  | { part; _ } when List.length ring_parts = 0 && part != 0 -> None
+  (* If we already have some parts, or this is the start part, begin collecting parts *)
+  | { bytes; part_count; _ } ->
+      let parts = bytes :: ring_parts in
+      let parts_len = List.length parts in
+      (* If we have enough then unmarshal! *)
+      (* TODO: We probably can just make the array all at once since we know the
+         size in theory? *)
+      if parts_len = part_count then (
         let full_bytes =
-          parts |> List.map snd
-          |> List.fold_left
-               (fun acc bytes ->
-                 let new_acc =
-                   Bytes.create (Bytes.length acc + Bytes.length bytes)
-                 in
-                 Bytes.blit acc 0 new_acc 0 (Bytes.length acc);
-                 Bytes.blit bytes 0 new_acc (Bytes.length acc)
-                   (Bytes.length bytes);
-                 new_acc)
-               (Bytes.create 0)
+          List.fold_right
+            (fun acc bytes ->
+              let new_acc =
+                Bytes.create (Bytes.length acc + Bytes.length bytes)
+              in
+              Bytes.blit acc 0 new_acc 0 (Bytes.length acc);
+              Bytes.blit bytes 0 new_acc (Bytes.length acc) (Bytes.length bytes);
+              new_acc)
+            parts (Bytes.create 0)
         in
-        Hashtbl.remove buffer id;
-        Marshal.from_bytes full_bytes 0)
+        Hashtbl.remove buffer ring_buffer_index;
+        Some (Marshal.from_bytes full_bytes 0))
+      else if parts_len < part_count then (
+        (* Weird state, clear buffer *)
+        Hashtbl.remove buffer ring_buffer_index;
+        None)
       else (
-        Hashtbl.replace buffer id parts;
-        event)
-  | _ -> event
+        (* If not then update the buffer *)
+        Hashtbl.replace buffer ring_buffer_index parts;
+        None)

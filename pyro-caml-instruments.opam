@@ -11,7 +11,6 @@ depends: [
   "dune" {>= "3.20"}
   "ocaml"
   "logs"
-  "digestif"
   "ppx_deriving"
   "odoc" {with-doc}
 ]
