@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::{collections::LinkedList, path::Path};
 
-use ocaml::Runtime;
+use ocaml::{FromValue, Runtime};
 use pyroscope::{
     backend::{BackendConfig, StackFrame, StackTrace},
     PyroscopeError,
@@ -45,9 +45,9 @@ impl From<ocaml::Error> for CamlIntfError {
 
 #[derive(ocaml::ToValue, ocaml::FromValue, Debug)]
 struct CamlStackFrame {
-    name: String,
-    filename: String,
-    line: ocaml::Int,
+    name: Option<String>,
+    filename: Option<String>,
+    line: Option<usize>,
     inlined: bool,
 }
 
@@ -56,19 +56,19 @@ impl From<CamlStackFrame> for StackFrame {
     fn from(frame: CamlStackFrame) -> Self {
         StackFrame {
             module: None,
-            name: Some(frame.name),
-            filename: Some(frame.filename),
+            name: frame.name,
+            filename: frame.filename,
             relative_path: None,
             absolute_path: None,
-            line: Some(frame.line as u32),
+            line: frame.line.map(|l| l as u32),
         }
     }
 }
 
 #[derive(ocaml::ToValue, ocaml::FromValue)]
 pub struct CamlStackTrace {
-    frames: ocaml::List<CamlStackFrame>,
-    thread_id: ocaml::Int,
+    frames: LinkedList<CamlStackFrame>,
+    thread_id: usize,
     thread_name: String,
 }
 
@@ -76,7 +76,6 @@ impl CamlStackTrace {
     pub fn into_stack_trace(self, backend_config: &BackendConfig, pid: u32) -> StackTrace {
         let frames = self
             .frames
-            .into_vec()
             .into_iter()
             .filter(|f| !f.inlined)
             .map(|f| f.into())
@@ -94,7 +93,7 @@ impl CamlStackTrace {
 pub type Cursor = ocaml::Value;
 
 ocaml::import! {
-  fn read_poll_ml(cursor:Cursor, interval:ocaml::Float) -> ocaml::List<CamlStackTrace>;
+  fn read_poll_ml(cursor:Cursor, interval:ocaml::Float) -> ocaml::List<ocaml::Value>;
   fn create_cursor_ml(path:String, pid:ocaml::Int) -> Cursor;
 }
 
@@ -109,7 +108,13 @@ pub fn read_poll(
     // but we assume the caller must ensure the gc is valid, and we convert the
     // path and int for the caller, so there is no risk they coerced a bad
     // value into an ocaml::Value
-    Ok(unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float) }?.into_vec())
+    Ok(
+        unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float) }?
+            .into_vec()
+            .into_iter()
+            .map(CamlStackTrace::from_value)
+            .collect(),
+    )
 }
 
 pub fn create_cursor(gc: &Runtime, path: &Path, pid: u32) -> Cursor {

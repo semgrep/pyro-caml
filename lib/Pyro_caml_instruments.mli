@@ -22,11 +22,11 @@ val create_cursor : string -> int -> Runtime_events.cursor
     from the given [path] and [pid]. *)
 
 val read_poll :
-     ?max_events:int option
-  -> ?callbacks:Runtime_events.Callbacks.t
-  -> Runtime_events.cursor
-  -> float
-  -> Stack_trace.t list
+  ?max_events:int option ->
+  ?callbacks:Runtime_events.Callbacks.t ->
+  Runtime_events.cursor ->
+  float ->
+  Stack_trace.t list
 (** [read_poll cursor sample_interval] will read the profiling runtime events
     from the given cursor, and will give attempt to give a single
     {!Stack_trace.t} per every unique thread id, within [sample_interval] of the
