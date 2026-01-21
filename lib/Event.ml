@@ -121,7 +121,7 @@ let process_perf_event ring_buffer_index buffer (marshaled, _) : point option =
          size in theory? *)
       if parts_len = part_count then (
         let full_bytes =
-          List.fold_right
+          List.fold_left
             (fun acc bytes ->
               let new_acc =
                 Bytes.create (Bytes.length acc + Bytes.length bytes)
@@ -129,11 +129,11 @@ let process_perf_event ring_buffer_index buffer (marshaled, _) : point option =
               Bytes.blit acc 0 new_acc 0 (Bytes.length acc);
               Bytes.blit bytes 0 new_acc (Bytes.length acc) (Bytes.length bytes);
               new_acc)
-            parts (Bytes.create 0)
+            (Bytes.create 0) (List.rev parts)
         in
         Hashtbl.remove buffer ring_buffer_index;
         Some (Marshal.from_bytes full_bytes 0))
-      else if parts_len < part_count then (
+      else if parts_len > part_count then (
         (* Weird state, clear buffer *)
         Hashtbl.remove buffer ring_buffer_index;
         None)
