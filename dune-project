@@ -2,13 +2,14 @@
 
 (name pyro-caml)
 
+(version 0.1.0)
+
 (generate_opam_files true)
 
 (source
  (github semgrep/pyro-caml))
 
-; with ocaml linking exception?
-(license LGPL-2.1-only)
+(license MIT)
 
 (authors "Austin Theriault <austin@cutedogs.org>")
 

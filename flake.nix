@@ -25,6 +25,7 @@
         devPackagesQuery = {
           ocaml-lsp-server = "*";
           ocamlformat = "*";
+          opam-publish = "*";
         };
         query = devPackagesQuery // {
           ocaml-base-compiler = "*";
