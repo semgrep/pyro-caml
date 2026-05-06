@@ -203,3 +203,42 @@ This will create a nix development shell
 make build # builds the pyro-caml binary for development
 make build-release # builds a faster release version
 ```
+
+# Releasing
+
+Three steps: bump, tag, publish to opam.
+
+## 1. Bump the version
+
+Run the **bump-version** workflow (Actions tab → "bump-version" → "Run workflow") with the new version (e.g. `0.2.0`, no leading `v`). It opens a PR that:
+
+- Updates the `(version ...)` stanza in `dune-project`.
+- Rolls `CHANGES.md`: the existing `## unreleased` heading becomes `## vX.Y.Z (YYYY-MM-DD)` and a fresh empty `## unreleased` is added above.
+- Regenerates the `*.opam` files.
+
+Review and merge the PR. If you bumped any Rust deps recently, also refresh `vendor/` via `make vendor` and include it in the same branch — the `vendor/` tree must be committed so opam's offline sandbox can build.
+
+## 2. Tag and push
+
+```sh
+git pull origin main
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag push triggers the `release` workflow, which builds `pyro-caml` binaries for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, and `aarch64-unknown-linux-gnu` and attaches them (with `.sha256` files) to a GitHub release.
+
+## 3. Publish to opam-repository (local)
+
+opam publishing is not done in CI — run it locally so the PR is opened under your own GitHub identity.
+
+```sh
+nix develop                                # or `make shell`
+opam-publish https://github.com/semgrep/pyro-caml/releases/tag/v0.2.0
+```
+
+`opam-publish` will prompt for a GitHub token on first run and cache it under `~/.opam/plugins/opam-publish/`. The token needs `public_repo` scope (or `repo` for org-owned forks) and you must already have a fork of `ocaml/opam-repository`.
+
+## Dry runs
+
+The `release` workflow's `workflow_dispatch` trigger with `dry_run: true` (the default) builds the binaries and uploads them as workflow artifacts without creating a GitHub release.

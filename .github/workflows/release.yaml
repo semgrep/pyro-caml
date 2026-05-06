@@ -1,0 +1,99 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build the binaries but don't create or upload to a GitHub release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Setup OCaml
+        uses: ocaml/setup-ocaml@e32b06a3e831ff2fbc6f08cf35be2085e3918014 # v3.6.1
+        with:
+          ocaml-compiler: 5.3.0
+          dune-cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Install OCaml deps
+        run: opam install . --deps-only -y
+
+      - name: Build pyro-caml binary
+        run: opam exec -- cargo build --release --config config/config.toml --package pyro-caml
+
+      - name: Package binary
+        run: |
+          set -euo pipefail
+          mkdir -p dist staging
+          cp target/release/pyro-caml LICENSE README.md staging/
+          tar -czf "dist/pyro-caml-${{ matrix.target }}.tar.gz" -C staging .
+          (cd dist && shasum -a 256 "pyro-caml-${{ matrix.target }}.tar.gz" > "pyro-caml-${{ matrix.target }}.tar.gz.sha256")
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pyro-caml-${{ matrix.target }}
+          path: dist/
+
+  release:
+    needs: [binaries]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          pattern: pyro-caml-*
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$tag" \
+              --generate-notes
+          fi
+          gh release upload "$tag" \
+            artifacts/*.tar.gz \
+            artifacts/*.tar.gz.sha256 \
+            --clobber --repo "$GITHUB_REPOSITORY"

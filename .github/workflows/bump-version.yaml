@@ -1,0 +1,93 @@
+name: bump-version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version (e.g. 0.2.0 — no leading v)"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be MAJOR.MINOR.PATCH (got: $VERSION)"
+            exit 1
+          fi
+
+      - name: Setup OCaml
+        uses: ocaml/setup-ocaml@e32b06a3e831ff2fbc6f08cf35be2085e3918014 # v3.6.1
+        with:
+          ocaml-compiler: 5.3.0
+          dune-cache: true
+
+      - name: Install OCaml deps
+        run: opam install . --deps-only -y
+
+      - name: Bump version in dune-project
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! grep -qE '^\(version ' dune-project; then
+            echo "::error::dune-project is missing a '(version ...)' stanza — add one manually before using this workflow"
+            exit 1
+          fi
+          sed -i -E "s/^\(version [^)]+\)/(version ${VERSION})/" dune-project
+          grep '^(version ' dune-project
+
+      - name: Roll CHANGES.md
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          today=$(date -u +%Y-%m-%d)
+          if ! grep -q '^## unreleased' CHANGES.md; then
+            echo "::error::CHANGES.md is missing an '## unreleased' section"
+            exit 1
+          fi
+          sed -i "0,/^## unreleased$/s//## unreleased\n\n## v${VERSION} (${today})/" CHANGES.md
+
+      - name: Regenerate opam files
+        run: opam exec -- dune build
+
+      - name: Show diff
+        run: git --no-pager diff
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@5e914681df9dc83aa4e4905692ca88beb2f9e91f # v7.0.5
+        with:
+          branch: release/v${{ inputs.version }}
+          base: main
+          commit-message: "chore: release v${{ inputs.version }}"
+          title: "chore: release v${{ inputs.version }}"
+          body: |
+            Automated version bump for **v${{ inputs.version }}**.
+
+            - `dune-project` version stanza updated
+            - `CHANGES.md` rolled (`unreleased` → `v${{ inputs.version }}`)
+            - `*.opam` files regenerated
+
+            After merging, tag the resulting commit and push:
+            ```sh
+            git tag v${{ inputs.version }}
+            git push origin v${{ inputs.version }}
+            ```
+            That kicks off the `release` workflow which builds binaries and creates the GitHub release. After the release is up, run `opam-publish` locally to submit to opam-repository.
+          delete-branch: true
