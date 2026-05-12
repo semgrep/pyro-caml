@@ -75,6 +75,7 @@ jobs:
         with:
           branch: release/v${{ inputs.version }}
           base: main
+          sign-commits: true
           commit-message: "chore: release v${{ inputs.version }}"
           title: "chore: release v${{ inputs.version }}"
           body: |
