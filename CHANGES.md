@@ -2,6 +2,8 @@
 
 ## unreleased
 
+## v1.0.0 (2026-05-12)
+
 - Relicense from LGPL-2.1-only to MIT.
 - Add release automation: GitHub workflow builds pre-built binaries and creates a GitHub Release on `v*` tag pushes.
 - Add `bump-version` workflow that opens a PR rolling `dune-project`, `CHANGES.md`, and the `*.opam` files for a new version.
