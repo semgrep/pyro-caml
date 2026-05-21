@@ -26,9 +26,8 @@
  (synopsis "Pyro Caml PPX")
  (depends
   ocaml
-  ; See https://github.com/LexiFi/landmarks/issues/44
   (ppxlib
-   (<= 0.35.0))
+   (>= 0.36.0))
   pyro-caml-instruments)
  (tags
   ("profiling" "ppx")))

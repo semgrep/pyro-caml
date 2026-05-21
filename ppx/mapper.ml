@@ -120,8 +120,11 @@ let wrap_pyro_caml expr =
 
 let rec wrap_pyro_caml_method ({pexp_desc; _} as expr) =
   match pexp_desc with
-  | Pexp_fun (label, def, pat, e) ->
-      {expr with pexp_desc= Pexp_fun (label, def, pat, wrap_pyro_caml_method e)}
+  | Pexp_function (params, type_constraint, Pfunction_body body) ->
+      let body' = wrap_pyro_caml_method body in
+      { expr with
+        pexp_desc= Pexp_function (params, type_constraint, Pfunction_body body')
+      }
   | Pexp_poly (e, typ) ->
       {expr with pexp_desc= Pexp_poly (wrap_pyro_caml_method e, typ)}
   | _ ->
@@ -145,16 +148,23 @@ let rec name_of_pattern pat =
   | _ ->
       None
 
-let rec translate_pvb_expr expr =
+(* In ppxlib 0.36+ (OCaml 5.3 AST), multi-argument function sugar
+   [let f x y = body] is represented as a single [Pexp_function] node with
+   all parameters bundled in [params], rather than nested [Pexp_fun]s with
+   ghost locs on the inner ones. So no spine walk is needed: wrap the body
+   of the outermost [Pfunction_body] directly. User-written nested funs
+   [let f x = fun y -> body] still nest as separate [Pexp_function] nodes,
+   and we intentionally leave the inner one alone (matching the previous
+   non-ghost-loc behavior, which wrapped the inner [fun y -> body] as a
+   whole). [Pfunction_cases] (i.e. [function | ...] form) is left
+   unprofiled, mirroring the previous fall-through of [Pexp_function cases]. *)
+let translate_pvb_expr expr =
   match expr.pexp_desc with
-  | Pexp_fun (arg_label, exp_opt, pattern, ({pexp_desc= Pexp_fun _; _} as e'))
-    when e'.pexp_loc.loc_ghost ->
-      let e' = translate_pvb_expr e' in
-      {expr with pexp_desc= Pexp_fun (arg_label, exp_opt, pattern, e')}
-  | Pexp_fun (arg_label, exp_opt, pattern, e') ->
-      let body_with_profiling = wrap_pyro_caml e' in
+  | Pexp_function (params, type_constraint, Pfunction_body body) ->
+      let body_with_profiling = wrap_pyro_caml body in
       { expr with
-        pexp_desc= Pexp_fun (arg_label, exp_opt, pattern, body_with_profiling)
+        pexp_desc=
+          Pexp_function (params, type_constraint, Pfunction_body body_with_profiling)
       }
   | _ ->
       expr
