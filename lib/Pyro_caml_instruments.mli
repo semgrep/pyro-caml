@@ -22,10 +22,11 @@ val create_cursor : string -> int -> Runtime_events.cursor
     from the given [path] and [pid]. *)
 
 val read_poll :
-  ?max_events:int option -> Runtime_events.cursor -> float -> Stack_trace.t list
-(** [read_poll cursor sample_interval] will read the profiling runtime events
+  ?max_events:int option -> Runtime_events.cursor -> float -> float -> Stack_trace.t list
+(** [read_poll cursor sample_interval max_delta] will read the profiling runtime events
     from the given cursor, and will give attempt to give a single
     {!Stack_trace.t} per every unique thread id, within [sample_interval] of the
-    start time of this function call. If a sample is not within this interval,
-    it will not be considered. Additionally it also ensures the samples chosen
-    are those closest to the start of the call of this function. *)
+    start time of this function call and within [max_delta] of the sample time.
+    If a sample is not within these intervals, they will not be considered.
+    Additionally it also ensures the samples chosen are those closest to the
+    start of the call of this function. *)

@@ -29,6 +29,7 @@ thread_local! {
 #[derive(Debug, Clone)]
 pub struct CamlSpyConfig {
     pub sample_rate: u32,
+    pub max_delta: u32,
     pub pid: u32,
     pub event_directory: PathBuf,
 }
@@ -60,6 +61,10 @@ impl CamlSpyConfig {
 
     fn sample_interval(&self) -> f64 {
         1.0 / self.sample_rate as f64
+    }
+
+    fn max_delta(&self) -> f64 {
+        self.max_delta as f64 / 1_000_000.0
     }
 }
 
@@ -133,7 +138,7 @@ impl Backend for CamlSpy {
                 let cursor = config.acquire_cursor();
                 log::trace!(target:LOG_TAG, "sampling...");
                 let mut stack_frames: Vec<StackTrace> = OCAML_GC
-                    .with_borrow(|gc| ocaml_intf::read_poll(gc, cursor, config.sample_interval()))
+                    .with_borrow(|gc| ocaml_intf::read_poll(gc, cursor, config.sample_interval(), config.max_delta()))
                     .unwrap_or_else(|e| {
                         log::error!(target:LOG_TAG, "Error reading from OCaml runtime: {:?}", e);
                         vec![]

@@ -76,15 +76,19 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 (* Minimize work we do in process event since the instrumented program can write
    events quickly and so we need to keep pace while polling if we can *)
-let process_point now interval sample_points = function
+let process_point now max_age sample_points = function
   | Some (time, raw_st) ->
-      if now -. time < interval then
+      if now -. time < max_age then
         sample_points := (time, raw_st) :: !sample_points
   | None -> ()
 
-let read_poll ?(max_events = None) cursor interval =
+let read_poll ?(max_events = None) cursor interval max_delta =
   let point_buffer = Hashtbl.create 1000 in
   let now = Unix.gettimeofday () in
+  (* Both [interval] and [max_delta] bound how stale an accepted sample may be,
+     so the effective acceptance window is the smaller of the two. Compute it
+     once here rather than per-event, since process_point is on the hot path. *)
+  let max_age = Float.min interval max_delta in
   let sample_points = ref [] in
   let callbacks =
     Runtime_events.Callbacks.create
@@ -99,7 +103,7 @@ let read_poll ?(max_events = None) cursor interval =
            (e : marshaled) ->
         e
         |> process_perf_event ring_buffer_index point_buffer
-        |> process_point now interval sample_points)
+        |> process_point now max_age sample_points)
       callbacks
   in
   (* TODO? Multithread this? *)

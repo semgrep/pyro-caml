@@ -50,6 +50,11 @@ struct Cli {
     #[arg(long = "rate", env = "PYRO_CAML_SAMPLE_RATE", default_value_t = 100)]
     sample_rate: u32,
 
+    /// Max difference between sample time and sample, in microseconds,
+    /// defaults to sample interval
+    #[arg(long = "max_delta", env = "PYRO_CAML_MAX_DELTA", default_value_t = 10_000)]
+    max_delta: u32,
+
     /// Tags to attach to the profiles, in the format key1=value1,key2=value2
     #[arg(long = "tags", env = "PYRO_CAML_TAGS", default_value = "")]
     tags: String,
@@ -130,6 +135,7 @@ fn main() {
     let bin = cli.binary;
     let args = cli.args;
     let sample_rate = cli.sample_rate;
+    let max_delta = cli.max_delta;
     let event_directory = cli.event_directory.unwrap_or_else(|| {
         // use a temp dir since that'll probably be in memory and probably faster
         let dir = TempDir::new("pyro_caml")
@@ -171,6 +177,7 @@ fn main() {
         event_directory,
         pid: child.id(),
         sample_rate,
+        max_delta,
     };
     let backend = BackendImpl::new(
         Box::new(CamlSpy::new(camlspy_config.clone(), backend_config)),
