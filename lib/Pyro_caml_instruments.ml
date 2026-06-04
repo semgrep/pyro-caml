@@ -115,9 +115,7 @@ let read_poll ?(max_events = None) cursor interval max_delta =
      produces more samples because it has more allocations, we're still picking
      the closest to the sample time *)
     (* I wonder if it is worth weighting the sample point by how close it is to
-       the sample time. Additionally, it might be worth sending no sample if we
-       don't have a sample within 1ms or some other resolution of the sample
-       time *)
+       the sample time. *)
     List.sort (fun (a_time, _) (b_time, _) ->
         Float.compare (now -. a_time) (now -. b_time))
     |> List.map (fun (_, raw_st) -> Stack_trace.t_of_raw_stack_trace raw_st)
