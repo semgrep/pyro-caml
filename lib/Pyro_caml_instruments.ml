@@ -115,7 +115,7 @@ let read_poll ?(max_events = None) cursor interval =
        don't have a sample within 1ms or some other resolution of the sample
        time *)
     List.sort (fun (a_time, _) (b_time, _) ->
-        Float.compare (now -. a_time) (now -. b_time))
+        Float.compare (Float.abs(now -. a_time)) (Float.abs(now -. b_time)))
     |> List.map (fun (_, raw_st) -> Stack_trace.t_of_raw_stack_trace raw_st)
     |> List.sort_uniq (fun a b ->
            Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id)
