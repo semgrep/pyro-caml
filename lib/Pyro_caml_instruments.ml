@@ -78,7 +78,7 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
    events quickly and so we need to keep pace while polling if we can *)
 let process_point now max_age sample_points = function
   | Some (time, raw_st) ->
-      if now -. time < max_age then
+      if Float.abs(now -. time) < max_age then
         sample_points := (time, raw_st) :: !sample_points
   | None -> ()
 
