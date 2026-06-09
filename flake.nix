@@ -3,6 +3,8 @@
     opam-nix.url = "github:tweag/opam-nix";
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "opam-nix/nixpkgs";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     opam-repository = {
       url = "github:ocaml/opam-repository";
       flake = false;
@@ -14,12 +16,17 @@
       flake-utils,
       opam-nix,
       nixpkgs,
+      rust-overlay,
       opam-repository,
     }@inputs:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+        rustToolchain = pkgs.rust-bin.stable."1.90.0".default;
         on = opam-nix.lib.${system};
         localPackagesQuery = builtins.mapAttrs (_: pkgs.lib.last) (on.listRepo (on.makeOpamRepo ./.));
         devPackagesQuery = {
@@ -52,7 +59,11 @@
           inputsFrom = builtins.attrValues packages;
           buildInputs = devPackages ++ [
             pkgs.rust-analyzer
+            rustToolchain
           ];
+          shellHook = ''
+            export PATH="${rustToolchain}/bin:$PATH"
+          '';
         };
       }
     );
