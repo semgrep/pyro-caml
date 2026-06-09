@@ -25,10 +25,6 @@ jobs:
         with:
           ocaml-compiler: 5.3.0
           dune-cache: true
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: "1.90.0" # keep in sync with rust-toolchain.toml
       - name: Setup
         run: make install-deps
       - name: build
