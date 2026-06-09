@@ -1,0 +1,8 @@
+**/target/
+**/pkg/
+**/dist/
+**/build/
+**/*egg-info*/
+**/**/Makefile
+*.so*
+*.gem

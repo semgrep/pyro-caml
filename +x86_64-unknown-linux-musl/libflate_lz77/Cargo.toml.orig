@@ -1,0 +1,20 @@
+[package]
+name = "libflate_lz77"
+version = "2.3.0"
+edition = "2024"
+description = "LZ77 encoder for libflate crate"
+homepage = "https://github.com/sile/libflate"
+repository = "https://github.com/sile/libflate"
+readme = "README.md"
+keywords = ["lz77"]
+categories = ["compression"]
+license = "MIT"
+
+[dependencies]
+rle-decode-fast = "1.0.0"
+no_std_io2 = { version = "0.9", default-features = false, features = ["alloc"] }
+hashbrown = { version = "0.16" }
+
+[features]
+default = ["std"]
+std = ["no_std_io2/std"]
