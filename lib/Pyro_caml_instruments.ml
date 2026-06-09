@@ -76,15 +76,19 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 (* Minimize work we do in process event since the instrumented program can write
    events quickly and so we need to keep pace while polling if we can *)
-let process_point now interval sample_points = function
+let process_point now max_age sample_points = function
   | Some (time, raw_st) ->
-      if now -. time < interval then
+      if Float.abs(now -. time) < max_age then
         sample_points := (time, raw_st) :: !sample_points
   | None -> ()
 
-let read_poll ?(max_events = None) cursor interval =
+let read_poll ?(max_events = None) cursor interval max_delta =
   let point_buffer = Hashtbl.create 1000 in
   let now = Unix.gettimeofday () in
+  (* Both [interval] and [max_delta] bound how stale an accepted sample may be,
+     so the effective acceptance window is the smaller of the two. Compute it
+     once here rather than per-event, since process_point is on the hot path. *)
+  let max_age = Float.min interval max_delta in
   let sample_points = ref [] in
   let callbacks =
     Runtime_events.Callbacks.create
@@ -99,7 +103,7 @@ let read_poll ?(max_events = None) cursor interval =
            (e : marshaled) ->
         e
         |> process_perf_event ring_buffer_index point_buffer
-        |> process_point now interval sample_points)
+        |> process_point now max_age sample_points)
       callbacks
   in
   (* TODO? Multithread this? *)
@@ -111,9 +115,7 @@ let read_poll ?(max_events = None) cursor interval =
      produces more samples because it has more allocations, we're still picking
      the closest to the sample time *)
     (* I wonder if it is worth weighting the sample point by how close it is to
-       the sample time. Additionally, it might be worth sending no sample if we
-       don't have a sample within 1ms or some other resolution of the sample
-       time *)
+       the sample time. *)
     List.sort (fun (a_time, _) (b_time, _) ->
         Float.compare (now -. a_time) (now -. b_time))
     |> List.map (fun (_, raw_st) -> Stack_trace.t_of_raw_stack_trace raw_st)

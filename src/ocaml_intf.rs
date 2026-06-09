@@ -93,7 +93,7 @@ impl CamlStackTrace {
 pub type Cursor = ocaml::Value;
 
 ocaml::import! {
-  fn read_poll_ml(cursor:Cursor, interval:ocaml::Float) -> ocaml::List<ocaml::Value>;
+  fn read_poll_ml(cursor:Cursor, interval:ocaml::Float, max_delta:ocaml::Float) -> ocaml::List<ocaml::Value>;
   fn create_cursor_ml(path:String, pid:ocaml::Int) -> Cursor;
 }
 
@@ -101,6 +101,7 @@ pub fn read_poll(
     gc: &Runtime,
     cursor: Cursor,
     interval: f64,
+    max_delta: f64,
 ) -> Result<Vec<CamlStackTrace>, CamlIntfError> {
     // # Safety
     //
@@ -109,7 +110,7 @@ pub fn read_poll(
     // path and int for the caller, so there is no risk they coerced a bad
     // value into an ocaml::Value
     Ok(
-        unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float) }?
+        unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float, max_delta as ocaml::Float) }?
             .into_vec()
             .into_iter()
             .map(CamlStackTrace::from_value)
