@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = UnderlyingSource)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "UnderlyingSource")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `UnderlyingSource` dictionary."]
     #[doc = ""]
@@ -20,6 +20,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `UnderlyingSource`*"]
     #[wasm_bindgen(method, setter = "autoAllocateChunkSize")]
     pub fn set_auto_allocate_chunk_size(this: &UnderlyingSource, val: f64);
+    #[doc = "Change the `autoAllocateChunkSize` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `UnderlyingSource`*"]
+    #[wasm_bindgen(method, setter = "autoAllocateChunkSize")]
+    pub fn set_auto_allocate_chunk_size_u32(this: &UnderlyingSource, val: u32);
+    #[doc = "Change the `autoAllocateChunkSize` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `UnderlyingSource`*"]
+    #[wasm_bindgen(method, setter = "autoAllocateChunkSize")]
+    pub fn set_auto_allocate_chunk_size_f64(this: &UnderlyingSource, val: f64);
     #[doc = "Get the `cancel` field of this object."]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `UnderlyingSource`*"]

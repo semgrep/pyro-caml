@@ -34,10 +34,16 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(wbg_reference_types)");
 
     if target_features.contains(&"reference-types")
-        || (target_arch == "wasm32"
+        || ((target_arch == "wasm32" || target_arch == "wasm64")
             && target_os == "unknown"
             && rustversion::cfg!(all(since(1.82), before(1.84))))
     {
         println!("cargo:rustc-cfg=wbg_reference_types");
+    }
+
+    if target_arch == "wasm32" && target_os == "emscripten" {
+        // Emscripten uses emcc to handle the linking and it will deadcode elimainte __instance_terminated
+        // which causes the test on Emscripten to fail to build.
+        println!("cargo:rustc-link-arg=-Wl,--export=__instance_terminated");
     }
 }

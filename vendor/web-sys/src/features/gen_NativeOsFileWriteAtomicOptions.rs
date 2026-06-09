@@ -4,7 +4,10 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = NativeOSFileWriteAtomicOptions)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "NativeOSFileWriteAtomicOptions"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `NativeOsFileWriteAtomicOptions` dictionary."]
     #[doc = ""]
@@ -30,6 +33,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `NativeOsFileWriteAtomicOptions`*"]
     #[wasm_bindgen(method, setter = "bytes")]
     pub fn set_bytes(this: &NativeOsFileWriteAtomicOptions, val: Option<f64>);
+    #[doc = "Change the `bytes` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `NativeOsFileWriteAtomicOptions`*"]
+    #[wasm_bindgen(method, setter = "bytes")]
+    pub fn set_bytes_opt_u32(this: &NativeOsFileWriteAtomicOptions, val: Option<u32>);
+    #[doc = "Change the `bytes` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `NativeOsFileWriteAtomicOptions`*"]
+    #[wasm_bindgen(method, setter = "bytes")]
+    pub fn set_bytes_opt_f64(this: &NativeOsFileWriteAtomicOptions, val: Option<f64>);
     #[doc = "Get the `flush` field of this object."]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `NativeOsFileWriteAtomicOptions`*"]

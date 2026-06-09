@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.57"
+rust-version = "1.77"
 name = "wasm-bindgen-shared"
-version = "0.2.105"
+version = "0.2.123"
 authors = ["The wasm-bindgen Developers"]
 build = "build.rs"
 links = "wasm_bindgen"
@@ -52,10 +52,15 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 uninlined_format_args = "warn"
 
+[lints.rust]
+unused_lifetimes = "warn"
+
 [lints.rust.unexpected_cfgs]
 level = "warn"
 priority = 0
 check-cfg = [
     "cfg(wasm_bindgen_unstable_test_coverage)",
+    "cfg(wasm_bindgen_use_js_sys)",
     "cfg(xxx_debug_only_print_generated_code)",
+    "cfg(legacy_eh)",
 ]

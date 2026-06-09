@@ -384,7 +384,7 @@ impl Semaphore {
             let new = curr.saturating_sub(n);
             match self.permits.compare_exchange_weak(
                 curr_bits,
-                new << Self::PERMIT_SHIFT,
+                (new << Self::PERMIT_SHIFT) | (curr_bits & Self::CLOSED),
                 AcqRel,
                 Acquire,
             ) {
@@ -775,6 +775,6 @@ unsafe impl linked_list::Link for Waiter {
     }
 
     unsafe fn pointers(target: NonNull<Waiter>) -> NonNull<linked_list::Pointers<Waiter>> {
-        Waiter::addr_of_pointers(target)
+        unsafe { Waiter::addr_of_pointers(target) }
     }
 }

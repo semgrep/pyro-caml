@@ -91,11 +91,14 @@ fn main() {
         println!(
             "cargo:rustc-check-cfg=cfg(__ZEROCOPY_INTERNAL_USE_ONLY_NIGHTLY_FEATURES_IN_TESTS)"
         );
+        println!("cargo:rustc-check-cfg=cfg(__ZEROCOPY_INTERNAL_USE_ONLY_DEV_MODE)");
         println!("cargo:rustc-check-cfg=cfg(coverage_nightly)");
+        println!("cargo:rustc-check-cfg=cfg(zerocopy_inline_always)");
+        println!("cargo:rustc-check-cfg=cfg(zerocopy_unstable_ptr)");
     }
 
     for version_cfg in version_cfgs {
-        if rustc_version >= version_cfg.version {
+        if rustc_version < version_cfg.version {
             println!("cargo:rustc-cfg={}", version_cfg.cfg_name);
         }
     }

@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = RTCOutboundRTPStreamStats)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "RTCOutboundRTPStreamStats")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `RtcOutboundRtpStreamStats` dictionary."]
     #[doc = ""]
@@ -192,6 +192,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `RtcOutboundRtpStreamStats`*"]
     #[wasm_bindgen(method, setter = "bytesSent")]
     pub fn set_bytes_sent(this: &RtcOutboundRtpStreamStats, val: f64);
+    #[doc = "Change the `bytesSent` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcOutboundRtpStreamStats`*"]
+    #[wasm_bindgen(method, setter = "bytesSent")]
+    pub fn set_bytes_sent_u32(this: &RtcOutboundRtpStreamStats, val: u32);
+    #[doc = "Change the `bytesSent` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcOutboundRtpStreamStats`*"]
+    #[wasm_bindgen(method, setter = "bytesSent")]
+    pub fn set_bytes_sent_f64(this: &RtcOutboundRtpStreamStats, val: f64);
     #[doc = "Get the `droppedFrames` field of this object."]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `RtcOutboundRtpStreamStats`*"]

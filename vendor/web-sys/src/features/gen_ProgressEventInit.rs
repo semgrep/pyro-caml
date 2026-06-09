@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = ProgressEventInit)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "ProgressEventInit")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `ProgressEventInit` dictionary."]
     #[doc = ""]
@@ -60,6 +60,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
     #[wasm_bindgen(method, setter = "loaded")]
     pub fn set_loaded(this: &ProgressEventInit, val: f64);
+    #[doc = "Change the `loaded` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
+    #[wasm_bindgen(method, setter = "loaded")]
+    pub fn set_loaded_u32(this: &ProgressEventInit, val: u32);
+    #[doc = "Change the `loaded` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
+    #[wasm_bindgen(method, setter = "loaded")]
+    pub fn set_loaded_f64(this: &ProgressEventInit, val: f64);
     #[doc = "Get the `total` field of this object."]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
@@ -70,6 +80,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
     #[wasm_bindgen(method, setter = "total")]
     pub fn set_total(this: &ProgressEventInit, val: f64);
+    #[doc = "Change the `total` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
+    #[wasm_bindgen(method, setter = "total")]
+    pub fn set_total_u32(this: &ProgressEventInit, val: u32);
+    #[doc = "Change the `total` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `ProgressEventInit`*"]
+    #[wasm_bindgen(method, setter = "total")]
+    pub fn set_total_f64(this: &ProgressEventInit, val: f64);
 }
 impl ProgressEventInit {
     #[doc = "Construct a new `ProgressEventInit`."]

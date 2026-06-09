@@ -4,7 +4,10 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = FetchReadableStreamReadDataArray)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "FetchReadableStreamReadDataArray"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `FetchReadableStreamReadDataArray` dictionary."]
     #[doc = ""]
@@ -20,6 +23,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `FetchReadableStreamReadDataArray`*"]
     #[wasm_bindgen(method, setter = "value")]
     pub fn set_value(this: &FetchReadableStreamReadDataArray, val: &::js_sys::Uint8Array);
+    #[doc = "Change the `value` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `FetchReadableStreamReadDataArray`*"]
+    #[wasm_bindgen(method, setter = "value")]
+    pub fn set_value_u8_slice(this: &FetchReadableStreamReadDataArray, val: &mut [u8]);
+    #[doc = "Change the `value` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `FetchReadableStreamReadDataArray`*"]
+    #[wasm_bindgen(method, setter = "value")]
+    pub fn set_value_u8_array(this: &FetchReadableStreamReadDataArray, val: &::js_sys::Uint8Array);
 }
 impl FetchReadableStreamReadDataArray {
     #[doc = "Construct a new `FetchReadableStreamReadDataArray`."]

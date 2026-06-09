@@ -1,7 +1,4 @@
-#[cfg(feature = "no_std")]
-use core2::io;
-#[cfg(not(feature = "no_std"))]
-use std::io;
+use no_std_io2::io;
 
 #[derive(Debug)]
 pub struct BitWriter<W> {
@@ -179,10 +176,8 @@ pub(crate) struct BitReaderState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "no_std")]
-    use core2::io;
-    #[cfg(not(feature = "no_std"))]
-    use std::io;
+    use alloc::vec::Vec;
+    use no_std_io2::io;
 
     #[test]
     fn writer_works() {

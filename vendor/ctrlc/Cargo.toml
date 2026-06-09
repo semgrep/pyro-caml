@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.69.0"
 name = "ctrlc"
-version = "3.5.1"
+version = "3.5.2"
 authors = ["Antti Keränen <detegr@gmail.com>"]
 build = false
 exclude = [
@@ -73,7 +73,7 @@ version = "0.3"
 version = "0.3"
 
 [target."cfg(unix)".dependencies.nix]
-version = "0.30"
+version = "0.31"
 features = ["signal"]
 default-features = false
 

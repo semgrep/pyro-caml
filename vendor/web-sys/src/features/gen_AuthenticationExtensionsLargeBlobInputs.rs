@@ -4,7 +4,10 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = AuthenticationExtensionsLargeBlobInputs)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "AuthenticationExtensionsLargeBlobInputs"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `AuthenticationExtensionsLargeBlobInputs` dictionary."]
     #[doc = ""]
@@ -42,6 +45,27 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `AuthenticationExtensionsLargeBlobInputs`*"]
     #[wasm_bindgen(method, setter = "write")]
     pub fn set_write(this: &AuthenticationExtensionsLargeBlobInputs, val: &::js_sys::Object);
+    #[doc = "Change the `write` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `AuthenticationExtensionsLargeBlobInputs`*"]
+    #[wasm_bindgen(method, setter = "write")]
+    pub fn set_write_buffer_source(
+        this: &AuthenticationExtensionsLargeBlobInputs,
+        val: &::js_sys::Object,
+    );
+    #[doc = "Change the `write` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `AuthenticationExtensionsLargeBlobInputs`*"]
+    #[wasm_bindgen(method, setter = "write")]
+    pub fn set_write_u8_slice(this: &AuthenticationExtensionsLargeBlobInputs, val: &mut [u8]);
+    #[doc = "Change the `write` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `AuthenticationExtensionsLargeBlobInputs`*"]
+    #[wasm_bindgen(method, setter = "write")]
+    pub fn set_write_u8_array(
+        this: &AuthenticationExtensionsLargeBlobInputs,
+        val: &::js_sys::Uint8Array,
+    );
 }
 impl AuthenticationExtensionsLargeBlobInputs {
     #[doc = "Construct a new `AuthenticationExtensionsLargeBlobInputs`."]

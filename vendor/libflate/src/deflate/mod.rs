@@ -4,10 +4,7 @@
 //!
 //! # Examples
 //! ```
-//! #[cfg(feature = "no_std")]
-//! use core2::io::{Read, Write};
-//! #[cfg(not(feature = "no_std"))]
-//! use std::io::{Read, Write};
+//! use no_std_io2::io::{Read, Write};
 //! use libflate::deflate::{Encoder, Decoder};
 //!
 //! // Encoding
@@ -23,9 +20,9 @@
 //! assert_eq!(decoded_data, b"Hello World!");
 //! ```
 pub use self::decode::Decoder;
+pub use self::encode::DEFAULT_BLOCK_SIZE;
 pub use self::encode::EncodeOptions;
 pub use self::encode::Encoder;
-pub use self::encode::DEFAULT_BLOCK_SIZE;
 
 mod decode;
 mod encode;
@@ -45,10 +42,8 @@ enum BlockType {
 mod tests {
     use super::*;
     use crate::lz77;
-    #[cfg(feature = "no_std")]
-    use core2::io::{Read, Write};
-    #[cfg(not(feature = "no_std"))]
-    use std::io::{Read, Write};
+    use alloc::vec::Vec;
+    use no_std_io2::io::{Read, Write};
 
     #[test]
     fn encode_and_decode_works() {

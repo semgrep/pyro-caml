@@ -15,12 +15,12 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    punctuated::Punctuated, spanned::Spanned, token::Comma, Data, DataStruct, DeriveInput, Field,
-    Fields, FieldsNamed, Generics,
+    Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, Generics, punctuated::Punctuated,
+    spanned::Spanned, token::Comma,
 };
 
 use crate::item::{Item, Kind, Name};
-use crate::utils::{inner_type, sub_type, Sp, Ty};
+use crate::utils::{Sp, Ty, inner_type, sub_type};
 
 pub(crate) fn derive_args(input: &DeriveInput) -> Result<TokenStream, syn::Error> {
     let ident = &input.ident;
@@ -63,7 +63,7 @@ pub(crate) fn gen_for_struct(
 ) -> Result<TokenStream, syn::Error> {
     if !matches!(&*item.kind(), Kind::Command(_)) {
         abort! { item.kind().span(),
-            "`{}` cannot be used with `command`",
+            "`{}` cannot be used with `#[command]`",
             item.kind().name(),
         }
     }
@@ -450,7 +450,7 @@ pub(crate) fn gen_constructor(fields: &[(&Field, Item)]) -> Result<TokenStream, 
             | Kind::Value
             | Kind::ExternalSubcommand => {
                 abort! { kind.span(),
-                    "`{}` cannot be used with `arg`",
+                    "`{}` cannot be used with `#[arg]`",
                     kind.name(),
                 }
             }
@@ -486,7 +486,7 @@ pub(crate) fn gen_constructor(fields: &[(&Field, Item)]) -> Result<TokenStream, 
                     Ty::OptionVecVec => {
                         abort!(
                             ty.span(),
-                            "{} types are not supported for subcommand",
+                            "`{}` is an invalid `#[command(subcommand)]` type",
                             ty.as_str()
                         );
                     }
@@ -527,7 +527,7 @@ pub(crate) fn gen_constructor(fields: &[(&Field, Item)]) -> Result<TokenStream, 
                     Ty::OptionVecVec => {
                         abort!(
                             ty.span(),
-                            "{} types are not supported for flatten",
+                            "`{}` is an invalid `#[command(flatten)]` type",
                             ty.as_str()
                         );
                     }
@@ -573,7 +573,7 @@ pub(crate) fn gen_updater(
         let genned = match &*kind {
             Kind::Command(_) | Kind::Value | Kind::ExternalSubcommand => {
                 abort! { kind.span(),
-                    "`{}` cannot be used with `arg`",
+                    "`{}` cannot be used with `#[arg]`",
                     kind.name(),
                 }
             }

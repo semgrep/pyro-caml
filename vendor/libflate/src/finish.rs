@@ -1,14 +1,7 @@
 //! `Finish` and related types.
 
-#[cfg(feature = "no_std")]
 use core::ops::{Deref, DerefMut};
-#[cfg(feature = "no_std")]
-use core2::io::{self, Write};
-#[cfg(not(feature = "no_std"))]
-use std::{
-    io::{self, Write},
-    ops::{Deref, DerefMut},
-};
+use no_std_io2::io::{self, Write};
 
 /// `Finish` is a type that represents a value which
 /// may have an error occurred during the computation.
@@ -112,10 +105,7 @@ impl<T: Complete> AutoFinish<T> {
     /// # Examples
     ///
     /// ```
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Write;
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Write;
+    /// use no_std_io2::io::Write;
     /// use libflate::finish::AutoFinish;
     /// use libflate::gzip::Encoder;
     ///
@@ -135,10 +125,10 @@ impl<T: Complete> AutoFinish<T> {
 }
 impl<T: Complete> Drop for AutoFinish<T> {
     fn drop(&mut self) {
-        if let Some(inner) = self.inner.take() {
-            if let Err(e) = inner.complete() {
-                panic!("{}", e);
-            }
+        if let Some(inner) = self.inner.take()
+            && let Err(e) = inner.complete()
+        {
+            panic!("{}", e);
         }
     }
 }
@@ -177,10 +167,7 @@ impl<T: Complete> AutoFinishUnchecked<T> {
     /// # Examples
     ///
     /// ```
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Write;
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Write;
+    /// use no_std_io2::io::Write;
     /// use libflate::finish::AutoFinishUnchecked;
     /// use libflate::gzip::Encoder;
     ///

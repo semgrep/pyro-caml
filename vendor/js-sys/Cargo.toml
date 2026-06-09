@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.57"
+rust-version = "1.77"
 name = "js-sys"
-version = "0.3.82"
+version = "0.3.100"
 authors = ["The wasm-bindgen Developers"]
 build = false
 include = [
@@ -37,8 +37,19 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys"
 
 [features]
-default = ["std"]
-std = ["wasm-bindgen/std"]
+default = [
+    "std",
+    "unsafe-eval",
+]
+futures-core-03-stream = [
+    "dep:futures-util",
+    "dep:futures-core",
+]
+std = [
+    "wasm-bindgen/std",
+    "dep:futures-util",
+]
+unsafe-eval = []
 
 [lib]
 name = "js_sys"
@@ -46,15 +57,33 @@ path = "src/lib.rs"
 test = false
 doctest = false
 
-[dependencies.once_cell]
-version = "1.12"
+[dependencies.cfg-if]
+version = "1.0.0"
+
+[dependencies.futures-core]
+version = "0.3.8"
+optional = true
+default-features = false
+
+[dependencies.futures-util]
+version = "0.3.31"
+features = ["std"]
+optional = true
 default-features = false
 
 [dependencies.wasm-bindgen]
-version = "=0.2.105"
+version = "=0.2.123"
 default-features = false
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.futures-channel]
+version = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.futures-lite]
+version = "2"
+default-features = false
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.half]
+version = "2"
 
 [lints.clippy]
 large_enum_variant = "allow"

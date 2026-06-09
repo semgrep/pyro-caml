@@ -177,7 +177,7 @@ impl<T: 'static> JoinSet<T> {
     ///
     /// # Panics
     ///
-    /// This method panics if it is called outside of a `LocalSet`or `LocalRuntime`.
+    /// This method panics if it is called outside of a `LocalSet` or `LocalRuntime`.
     ///
     /// [`LocalSet`]: crate::task::LocalSet
     /// [`LocalRuntime`]: crate::runtime::LocalRuntime
@@ -649,6 +649,51 @@ where
     }
 }
 
+/// Extend a [`JoinSet`] with futures from an iterator.
+///
+/// This is equivalent to calling [`JoinSet::spawn`] on each element of the iterator.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(not(target_family = "wasm"))]
+/// # {
+/// use tokio::task::JoinSet;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut set: JoinSet<_> = (0..5).map(|i| async move { i }).collect();
+///
+///     set.extend((5..10).map(|i| async move { i }));
+///
+///     let mut seen = [false; 10];
+///     while let Some(res) = set.join_next().await {
+///         let idx = res.unwrap();
+///         seen[idx] = true;
+///     }
+///
+///     for i in 0..10 {
+///         assert!(seen[i]);
+///     }
+/// }
+/// # }
+/// ```
+impl<T, F> std::iter::Extend<F> for JoinSet<T>
+where
+    F: Future<Output = T>,
+    F: Send + 'static,
+    T: Send + 'static,
+{
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = F>,
+    {
+        iter.into_iter().for_each(|task| {
+            self.spawn(task);
+        });
+    }
+}
+
 // === impl Builder ===
 
 #[cfg(all(tokio_unstable, feature = "tracing"))]
@@ -748,8 +793,8 @@ impl<'a, T: 'static> Builder<'a, T> {
             .insert(self.builder.spawn_blocking_on(f, handle)?))
     }
 
-    /// Spawn the provided task on the current [`LocalSet`] with this builder's
-    /// settings, and store it in the [`JoinSet`].
+    /// Spawn the provided task on the current [`LocalSet`] or [`LocalRuntime`]
+    /// with this builder's settings, and store it in the [`JoinSet`].
     ///
     /// # Returns
     ///
@@ -757,9 +802,10 @@ impl<'a, T: 'static> Builder<'a, T> {
     ///
     /// # Panics
     ///
-    /// This method panics if it is called outside of a `LocalSet`.
+    /// This method panics if it is called outside of a `LocalSet` or `LocalRuntime`.
     ///
     /// [`LocalSet`]: crate::task::LocalSet
+    /// [`LocalRuntime`]: crate::runtime::LocalRuntime
     /// [`AbortHandle`]: crate::task::AbortHandle
     #[track_caller]
     pub fn spawn_local<F>(self, future: F) -> std::io::Result<AbortHandle>

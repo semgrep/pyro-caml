@@ -2,19 +2,15 @@
 //!
 //! LZ77 is a compression algorithm used in [DEFLATE](https://tools.ietf.org/html/rfc1951).
 #![warn(missing_docs)]
-#![cfg_attr(no_std, feature = "no_std")]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "no_std")]
 extern crate alloc;
 
 pub use self::default::{DefaultLz77Encoder, DefaultLz77EncoderBuilder};
-#[cfg(feature = "no_std")]
 use alloc::vec::Vec;
-#[cfg(feature = "no_std")]
-use core2::io;
+use core::cmp;
+use no_std_io2::io;
 use rle_decode_fast::rle_decode;
-#[cfg(not(feature = "no_std"))]
-use std::io;
 
 mod default;
 
@@ -66,7 +62,7 @@ pub trait Sink {
     /// Consumes a LZ77 encoded `Code`.
     fn consume(&mut self, code: Code);
 }
-impl<'a, T> Sink for &'a mut T
+impl<T> Sink for &mut T
 where
     T: Sink,
 {
@@ -118,14 +114,11 @@ impl NoCompressionLz77Encoder {
     ///
     /// # Examples
     /// ```
-    /// use libflate::deflate;
-    /// use libflate::lz77::{Lz77Encode, NoCompressionLz77Encoder, CompressionLevel};
+    /// use libflate_lz77::{CompressionLevel, Lz77Encode, NoCompressionLz77Encoder};
     ///
     /// let lz77 = NoCompressionLz77Encoder::new();
     /// assert_eq!(lz77.compression_level(), CompressionLevel::None);
-    ///
-    /// let options = deflate::EncodeOptions::with_lz77(lz77);
-    /// let _deflate = deflate::Encoder::with_options(Vec::new(), options);
+    /// assert_eq!(lz77.window_size(), libflate_lz77::MAX_WINDOW_SIZE);
     /// ```
     pub fn new() -> Self {
         NoCompressionLz77Encoder
@@ -180,13 +173,13 @@ impl Lz77Decoder {
                 if self.buffer.len() < backward_distance as usize {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        #[cfg(not(feature = "no_std"))]
+                        #[cfg(feature = "std")]
                         format!(
                             "Too long backword reference: buffer.len={}, distance={}",
                             self.buffer.len(),
                             backward_distance
                         ),
-                        #[cfg(feature = "no_std")]
+                        #[cfg(not(feature = "std"))]
                         "Too long backword reference",
                     ));
                 }
@@ -240,7 +233,7 @@ impl Lz77Decoder {
 
 impl io::Read for Lz77Decoder {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let copy_size = std::cmp::min(buf.len(), self.buffer.len() - self.offset);
+        let copy_size = cmp::min(buf.len(), self.buffer.len() - self.offset);
         buf[..copy_size].copy_from_slice(&self.buffer[self.offset..][..copy_size]);
         self.offset += copy_size;
         self.truncate_old_buffer();
@@ -251,12 +244,8 @@ impl io::Read for Lz77Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "no_std")]
     use alloc::vec::Vec;
-    #[cfg(feature = "no_std")]
-    use core2::io::Read as _;
-    #[cfg(not(feature = "no_std"))]
-    use std::io::Read as _;
+    use no_std_io2::io::Read as _;
 
     #[test]
     fn encoder_and_decoder_works() {

@@ -141,6 +141,15 @@ for network parsing.
 [duplicate-import-errors]: https://github.com/google/zerocopy/issues/1587
 [simd-layout]: https://rust-lang.github.io/unsafe-code-guidelines/layout/packed-simd-vectors.html
 
+## Build Tuning
+
+### `--cfg zerocopy_inline_always`
+
+Upgrades `#[inline]` to `#[inline(always)]` on many of zerocopy's public
+functions and methods. This provides a narrowly-scoped alternative that
+*may* improve the optimization of hot paths using zerocopy without the broad
+compile-time penalties of configuring `codegen-units=1`.
+
 ## Security Ethos
 
 Zerocopy is expressly designed for use in security-critical contexts. We
@@ -202,9 +211,9 @@ Zerocopy uses [GitHub Releases].
 
 ## Thanks
 
-Zerocopy is maintained by engineers at Google and Amazon with help from
-[many wonderful contributors][contributors]. Thank you to everyone who has
-lent a hand in making Rust a little more secure!
+Zerocopy is maintained by engineers at Google with help from [many wonderful
+contributors][contributors]. Thank you to everyone who has lent a hand in
+making Rust a little more secure!
 
 [contributors]: https://github.com/google/zerocopy/graphs/contributors
 

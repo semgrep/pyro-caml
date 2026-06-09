@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
-use prost::Message;
-
-use crate::backend::types::{EncodedReport, Report};
-use crate::encode::profiles::{Function, Label, Line, Location, Profile, Sample, ValueType};
+use crate::backend::types::Report;
+use crate::encode::gen::google::{Function, Label, Line, Location, Profile, Sample, ValueType};
 
 struct PProfBuilder {
     profile: Profile,
@@ -80,8 +78,11 @@ impl PProfBuilder {
 }
 
 pub fn encode(
-    reports: &Vec<Report>, sample_rate: u32, start_time_nanos: u64, duration_nanos: u64,
-) -> Vec<EncodedReport> {
+    reports: &Vec<Report>,
+    sample_rate: u32,
+    start_time_nanos: u64,
+    duration_nanos: u64,
+) -> Profile {
     let mut b = PProfBuilder {
         strings: HashMap::new(),
         functions: HashMap::new(),
@@ -154,12 +155,5 @@ pub fn encode(
             b.profile.sample.push(sample);
         }
     }
-
-    vec![EncodedReport {
-        format: "pprof".to_string(),
-        content_type: "binary/octet-stream".to_string(),
-        content_encoding: "".to_string(),
-        data: b.profile.encode_to_vec(),
-        metadata: Default::default(),
-    }]
+    b.profile
 }

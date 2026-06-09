@@ -6,9 +6,10 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::panic::AssertUnwindSafe;
 use core::{mem::MaybeUninit, ptr::NonNull};
 
-use crate::{Clamped, JsCast, JsError, JsValue};
+use crate::{__rt::marker::ErasableGeneric, Clamped, JsError, JsValue};
 use cfg_if::cfg_if;
 
 pub use wasm_bindgen_shared::tys::*;
@@ -49,13 +50,26 @@ simple! {
     u64 => U64
     i128 => I128
     u128 => U128
-    isize => I32
-    usize => U32
     f32 => F32
     f64 => F64
     bool => BOOLEAN
     char => CHAR
     JsValue => EXTERNREF
+}
+
+// isize/usize map to I32/U32 on wasm32 and direct *_AS_F64 descriptors on wasm64
+cfg_if! {
+    if #[cfg(target_arch = "wasm64")] {
+        simple! {
+            isize => I64_AS_F64
+            usize => U64_AS_F64
+        }
+    } else {
+        simple! {
+            isize => I32
+            usize => U32
+        }
+    }
 }
 
 cfg_if! {
@@ -74,14 +88,14 @@ cfg_if! {
 impl<T> WasmDescribe for *const T {
     #[cfg_attr(wasm_bindgen_unstable_test_coverage, coverage(off))]
     fn describe() {
-        inform(U32)
+        inform(RAW_POINTER)
     }
 }
 
 impl<T> WasmDescribe for *mut T {
     #[cfg_attr(wasm_bindgen_unstable_test_coverage, coverage(off))]
     fn describe() {
-        inform(U32)
+        inform(RAW_POINTER)
     }
 }
 
@@ -129,7 +143,7 @@ cfg_if! {
     }
 }
 
-impl<T: JsCast + WasmDescribe> WasmDescribeVector for T {
+impl<T: ErasableGeneric<Repr = JsValue> + WasmDescribe> WasmDescribeVector for T {
     #[cfg_attr(wasm_bindgen_unstable_test_coverage, coverage(off))]
     fn describe_vector() {
         inform(VECTOR);
@@ -196,5 +210,14 @@ impl WasmDescribe for JsError {
     #[cfg_attr(wasm_bindgen_unstable_test_coverage, coverage(off))]
     fn describe() {
         JsValue::describe();
+    }
+}
+
+impl<T> WasmDescribe for AssertUnwindSafe<T>
+where
+    T: WasmDescribe,
+{
+    fn describe() {
+        T::describe();
     }
 }

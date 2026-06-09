@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.57"
+rust-version = "1.77"
 name = "wasm-bindgen-futures"
-version = "0.4.55"
+version = "0.4.73"
 authors = ["The wasm-bindgen Developers"]
 build = false
 include = [
@@ -41,35 +41,22 @@ rustdoc-args = [
 
 [features]
 default = ["std"]
-futures-core-03-stream = ["futures-core"]
+futures-core-03-stream = ["js-sys/futures-core-03-stream"]
 std = [
     "wasm-bindgen/std",
     "js-sys/std",
-    "web-sys/std",
 ]
 
 [lib]
 name = "wasm_bindgen_futures"
 path = "src/lib.rs"
 
-[dependencies.cfg-if]
-version = "1.0.0"
-
-[dependencies.futures-core]
-version = "0.3.8"
-optional = true
-default-features = false
-
 [dependencies.js-sys]
-version = "=0.3.82"
-default-features = false
-
-[dependencies.once_cell]
-version = "1.12"
+version = "=0.3.100"
 default-features = false
 
 [dependencies.wasm-bindgen]
-version = "=0.2.105"
+version = "=0.2.123"
 default-features = false
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies.futures-channel]
@@ -77,14 +64,6 @@ version = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies.futures-lite]
 version = "2"
-default-features = false
-
-[target.'cfg(target_feature = "atomics")'.dependencies.web-sys]
-version = "=0.3.82"
-features = [
-    "MessageEvent",
-    "Worker",
-]
 default-features = false
 
 [lints.clippy]
@@ -95,10 +74,15 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 uninlined_format_args = "warn"
 
+[lints.rust]
+unused_lifetimes = "warn"
+
 [lints.rust.unexpected_cfgs]
 level = "warn"
 priority = 0
 check-cfg = [
     "cfg(wasm_bindgen_unstable_test_coverage)",
+    "cfg(wasm_bindgen_use_js_sys)",
     "cfg(xxx_debug_only_print_generated_code)",
+    "cfg(legacy_eh)",
 ]

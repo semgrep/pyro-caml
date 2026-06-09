@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.57"
+rust-version = "1.77"
 name = "web-sys"
-version = "0.3.82"
+version = "0.3.100"
 authors = ["The wasm-bindgen Developers"]
 build = false
 include = [
@@ -41,6 +41,7 @@ rustdoc-args = ["--cfg=web_sys_unstable_apis"]
 [features]
 AbortController = []
 AbortSignal = ["EventTarget"]
+AbstractRange = []
 AddEventListenerOptions = []
 AesCbcParams = []
 AesCtrParams = []
@@ -95,7 +96,7 @@ AudioContextState = []
 AudioData = []
 AudioDataCopyToOptions = []
 AudioDataInit = []
-AudioDecoder = []
+AudioDecoder = ["EventTarget"]
 AudioDecoderConfig = []
 AudioDecoderInit = []
 AudioDecoderSupport = []
@@ -103,7 +104,7 @@ AudioDestinationNode = [
     "AudioNode",
     "EventTarget",
 ]
-AudioEncoder = []
+AudioEncoder = ["EventTarget"]
 AudioEncoderConfig = []
 AudioEncoderInit = []
 AudioEncoderSupport = []
@@ -174,6 +175,7 @@ BiquadFilterNode = [
 ]
 BiquadFilterOptions = []
 BiquadFilterType = []
+BitrateMode = []
 Blob = []
 BlobEvent = ["Event"]
 BlobEventInit = []
@@ -274,6 +276,8 @@ CloseEventInit = []
 CodecState = []
 CollectedClientData = []
 ColorSpaceConversion = []
+CommandEvent = ["Event"]
+CommandEventInit = []
 Comment = [
     "CharacterData",
     "EventTarget",
@@ -377,6 +381,7 @@ CssTransition = [
     "Animation",
     "EventTarget",
 ]
+CssViewTransitionRule = ["CssRule"]
 CustomElementRegistry = []
 CustomEvent = ["Event"]
 CustomEventInit = []
@@ -564,7 +569,10 @@ FileSystemPermissionMode = []
 FileSystemReadWriteOptions = []
 FileSystemRemoveOptions = []
 FileSystemSyncAccessHandle = []
+FileSystemSyncAccessHandleMode = []
+FileSystemSyncAccessHandleOptions = []
 FileSystemWritableFileStream = ["WritableStream"]
+FillLightMode = []
 FillMode = []
 FlashClassification = []
 FlowControlType = []
@@ -606,6 +614,9 @@ GamepadMappingType = []
 GamepadPose = []
 GamepadTouch = []
 Geolocation = []
+GeolocationCoordinates = []
+GeolocationPosition = []
+GeolocationPositionError = []
 GestureEvent = [
     "Event",
     "UiEvent",
@@ -764,6 +775,11 @@ HidReportInfo = []
 HidReportItem = []
 HidUnitSystem = []
 HiddenPluginEventInit = []
+Highlight = []
+HighlightHitResult = []
+HighlightRegistry = []
+HighlightType = []
+HighlightsFromPointOptions = []
 History = []
 HitRegionOptions = []
 HkdfParams = []
@@ -1262,7 +1278,7 @@ ImageDecoder = []
 ImageDecoderInit = []
 ImageEncodeOptions = []
 ImageOrientation = []
-ImageTrack = ["EventTarget"]
+ImageTrack = []
 ImageTrackList = []
 InputDeviceInfo = ["MediaDeviceInfo"]
 InputEvent = [
@@ -1365,6 +1381,7 @@ MediaSession = []
 MediaSessionAction = []
 MediaSessionActionDetails = []
 MediaSessionPlaybackState = []
+MediaSettingsRange = []
 MediaSource = ["EventTarget"]
 MediaSourceEndOfStreamError = []
 MediaSourceEnum = []
@@ -1407,6 +1424,7 @@ MessageChannel = []
 MessageEvent = ["Event"]
 MessageEventInit = []
 MessagePort = ["EventTarget"]
+MeteringMode = []
 MidiAccess = ["EventTarget"]
 MidiConnectionEvent = ["Event"]
 MidiConnectionEventInit = []
@@ -1535,7 +1553,9 @@ PerformanceEntry = []
 PerformanceEntryEventInit = []
 PerformanceEntryFilterOptions = []
 PerformanceMark = ["PerformanceEntry"]
+PerformanceMarkOptions = []
 PerformanceMeasure = ["PerformanceEntry"]
+PerformanceMeasureOptions = []
 PerformanceNavigation = []
 PerformanceNavigationTiming = [
     "PerformanceEntry",
@@ -1555,6 +1575,8 @@ PermissionName = []
 PermissionState = []
 PermissionStatus = ["EventTarget"]
 Permissions = []
+PhotoCapabilities = []
+PhotoSettings = []
 PictureInPictureEvent = ["Event"]
 PictureInPictureEventInit = []
 PictureInPictureWindow = ["EventTarget"]
@@ -1563,6 +1585,7 @@ PlaybackDirection = []
 Plugin = []
 PluginArray = []
 PluginCrashedEventInit = []
+Point2d = []
 PointerEvent = [
     "Event",
     "MouseEvent",
@@ -1640,7 +1663,7 @@ QueryOptions = []
 QueuingStrategy = []
 QueuingStrategyInit = []
 RadioNodeList = ["NodeList"]
-Range = []
+Range = ["AbstractRange"]
 RcwnPerfStats = []
 RcwnStatus = []
 ReadableByteStreamController = []
@@ -1656,6 +1679,7 @@ ReadableStreamReaderMode = []
 ReadableStreamType = []
 ReadableWritablePair = []
 RecordingState = []
+RedEyeReduction = []
 ReferrerPolicy = []
 RegisterRequest = []
 RegisterResponse = []
@@ -1786,6 +1810,11 @@ SchedulerPostTaskOptions = []
 Scheduling = []
 Screen = ["EventTarget"]
 ScreenColorGamut = []
+ScreenDetailed = [
+    "EventTarget",
+    "Screen",
+]
+ScreenDetails = ["EventTarget"]
 ScreenLuminance = []
 ScreenOrientation = ["EventTarget"]
 ScriptProcessorNode = [
@@ -1798,6 +1827,7 @@ ScrollAreaEvent = [
 ]
 ScrollBehavior = []
 ScrollBoxObject = []
+ScrollIntoViewContainer = []
 ScrollIntoViewOptions = []
 ScrollLogicalPosition = []
 ScrollOptions = []
@@ -1842,6 +1872,7 @@ SharedWorkerGlobalScope = [
     "EventTarget",
     "WorkerGlobalScope",
 ]
+ShowPopoverOptions = []
 SignResponse = []
 SocketElement = []
 SocketOptions = []
@@ -1872,6 +1903,9 @@ SpeechSynthesisEvent = ["Event"]
 SpeechSynthesisEventInit = []
 SpeechSynthesisUtterance = ["EventTarget"]
 SpeechSynthesisVoice = []
+StartViewTransitionOptions = []
+StaticRange = ["AbstractRange"]
+StaticRangeInit = []
 StereoPannerNode = [
     "AudioNode",
     "EventTarget",
@@ -2452,6 +2486,7 @@ TimeEvent = ["Event"]
 TimeRanges = []
 ToggleEvent = ["Event"]
 ToggleEventInit = []
+TogglePopoverOptions = []
 TokenBinding = []
 TokenBindingStatus = []
 Touch = []
@@ -2526,11 +2561,12 @@ VideoColorPrimaries = []
 VideoColorSpace = []
 VideoColorSpaceInit = []
 VideoConfiguration = []
-VideoDecoder = []
+VideoDecoder = ["EventTarget"]
 VideoDecoderConfig = []
 VideoDecoderInit = []
 VideoDecoderSupport = []
-VideoEncoder = []
+VideoEncoder = ["EventTarget"]
+VideoEncoderBitrateMode = []
 VideoEncoderConfig = []
 VideoEncoderEncodeOptions = []
 VideoEncoderInit = []
@@ -2540,6 +2576,7 @@ VideoFrame = []
 VideoFrameBufferInit = []
 VideoFrameCopyToOptions = []
 VideoFrameInit = []
+VideoFrameMetadata = []
 VideoMatrixCoefficients = []
 VideoPixelFormat = []
 VideoPlaybackQuality = []
@@ -2551,6 +2588,7 @@ VideoTrack = []
 VideoTrackList = ["EventTarget"]
 VideoTransferCharacteristics = []
 ViewTransition = []
+ViewTransitionTypeSet = []
 VisibilityState = []
 VisualViewport = ["EventTarget"]
 VoidCallback = []
@@ -2762,11 +2800,11 @@ test = false
 doctest = false
 
 [dependencies.js-sys]
-version = "=0.3.82"
+version = "=0.3.100"
 default-features = false
 
 [dependencies.wasm-bindgen]
-version = "=0.2.105"
+version = "=0.2.123"
 default-features = false
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies.futures]

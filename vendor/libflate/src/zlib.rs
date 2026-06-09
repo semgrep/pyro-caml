@@ -4,10 +4,7 @@
 //!
 //! # Examples
 //! ```
-//! #[cfg(not(feature = "no_std"))]
-//! use std::io::{Read, Write};
-//! #[cfg(feature = "no_std")]
-//! use core2::io::{Read, Write};
+//! use no_std_io2::io::{Read, Write};
 //! use libflate::zlib::{Encoder, Decoder};
 //!
 //! // Encoding
@@ -26,10 +23,7 @@ use crate::checksum;
 use crate::deflate;
 use crate::finish::{Complete, Finish};
 use crate::lz77;
-#[cfg(feature = "no_std")]
-use core2::io;
-#[cfg(not(feature = "no_std"))]
-use std::io;
+use no_std_io2::io;
 
 const COMPRESSION_METHOD_DEFLATE: u8 = 8;
 
@@ -230,7 +224,7 @@ impl Header {
     {
         let mut buf = [0; 2];
         reader.read_exact(&mut buf)?;
-        let (cmf, flg) = (buf[0], buf[1]);
+        let [cmf, flg] = buf;
         let check = (u16::from(cmf) << 8) + u16::from(flg);
         if check % 31 != 0 {
             return Err(invalid_data_error!(
@@ -303,10 +297,7 @@ where
     ///
     /// # Examples
     /// ```
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Read;
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Read;
+    /// use no_std_io2::io::Read;
     /// use libflate::zlib::Decoder;
     ///
     /// let encoded_data = [120, 156, 243, 72, 205, 201, 201, 87, 8, 207, 47,
@@ -359,10 +350,7 @@ where
     ///
     /// # Examples
     /// ```
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Cursor;
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Cursor;
+    /// use no_std_io2::io::Cursor;
     /// use libflate::zlib::Decoder;
     ///
     /// let encoded_data = [120, 156, 243, 72, 205, 201, 201, 87, 8, 207, 47,
@@ -547,10 +535,10 @@ where
     ///
     /// # Examples
     /// ```
-    /// #[cfg(not(feature = "no_std"))]
+    /// #[cfg(feature = "std")]
     /// use std::io::Write;
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Write;
+    /// #[cfg(not(feature = "std"))]
+    /// use no_std_io2::io::Write;
     /// use libflate::zlib::Encoder;
     ///
     /// let mut encoder = Encoder::new(Vec::new()).unwrap();
@@ -575,10 +563,7 @@ where
     ///
     /// # Examples
     /// ```
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Write;
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Write;
+    /// use no_std_io2::io::Write;
     /// use libflate::zlib::{Encoder, EncodeOptions};
     ///
     /// let options = EncodeOptions::new().no_compression();
@@ -616,10 +601,7 @@ where
     ///
     /// # Examples
     /// ```
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Write;
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Write;
+    /// use no_std_io2::io::Write;
     /// use libflate::zlib::Encoder;
     ///
     /// let mut encoder = Encoder::new(Vec::new()).unwrap();
@@ -636,10 +618,7 @@ where
     /// it may be convenient to use `AutoFinishUnchecked` instead of the explicit invocation of this method.
     ///
     /// ```
-    /// #[cfg(feature = "no_std")]
-    /// use core2::io::Write;
-    /// #[cfg(not(feature = "no_std"))]
-    /// use std::io::Write;
+    /// use no_std_io2::io::Write;
     /// use libflate::finish::AutoFinishUnchecked;
     /// use libflate::zlib::Encoder;
     ///
@@ -705,10 +684,8 @@ where
 mod tests {
     use super::*;
     use crate::finish::AutoFinish;
-    #[cfg(feature = "no_std")]
-    use core2::io::{Read as _, Write as _};
-    #[cfg(not(feature = "no_std"))]
-    use std::io::{Read as _, Write as _};
+    use alloc::{borrow::ToOwned, string::ToString, vec, vec::Vec};
+    use no_std_io2::io::{Read as _, Write as _};
 
     fn decode_all(buf: &[u8]) -> io::Result<Vec<u8>> {
         let mut decoder = Decoder::new(buf).unwrap();
@@ -925,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "no_std"))]
+    #[cfg(feature = "std")]
     /// See: https://github.com/sile/libflate/issues/61
     fn issue_61() {
         let data = default_encode(b"Hello World").unwrap();
@@ -947,11 +924,21 @@ mod tests {
         let mut buf = Vec::new();
         let result = decoder.read_to_end(&mut buf);
         assert!(result.is_err());
+        buf.extend_from_slice(decoder.unread_decoded_data());
 
         let decoded_data = [
             255, 254, 49, 0, 58, 0, 77, 0, 121, 0, 110, 0, 101, 0, 119, 0, 115, 0, 101, 0, 99, 0,
             116, 0, 105, 0, 111, 0, 110, 0, 13, 0, 10,
         ];
-        assert_eq!(decoder.unread_decoded_data(), decoded_data);
+        assert_eq!(buf, decoded_data);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn issue_82() {
+        let encoded_data = [0x00, 0x00];
+        let error = Header::read_from(&encoded_data[..]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("method=0"));
     }
 }

@@ -10,7 +10,9 @@ use std::slice;
 use anyhow::{bail, Error};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Attribute, Lit, LitBool, Meta, MetaList, MetaNameValue, NestedMeta};
+use syn::punctuated::Punctuated;
+use syn::Path;
+use syn::{Attribute, Expr, ExprLit, Lit, LitBool, LitInt, Meta, MetaNameValue, Token};
 
 #[derive(Clone)]
 pub enum Field {
@@ -32,7 +34,7 @@ impl Field {
     /// If the meta items are invalid, an error will be returned.
     /// If the field should be ignored, `None` is returned.
     pub fn new(attrs: Vec<Attribute>, inferred_tag: Option<u32>) -> Result<Option<Field>, Error> {
-        let attrs = prost_attrs(attrs);
+        let attrs = prost_attrs(attrs)?;
 
         // TODO: check for ignore attribute.
 
@@ -58,7 +60,7 @@ impl Field {
     /// If the meta items are invalid, an error will be returned.
     /// If the field should be ignored, `None` is returned.
     pub fn new_oneof(attrs: Vec<Attribute>) -> Result<Option<Field>, Error> {
-        let attrs = prost_attrs(attrs);
+        let attrs = prost_attrs(attrs)?;
 
         // TODO: check for ignore attribute.
 
@@ -88,36 +90,36 @@ impl Field {
     }
 
     /// Returns a statement which encodes the field.
-    pub fn encode(&self, ident: TokenStream) -> TokenStream {
+    pub fn encode(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         match *self {
-            Field::Scalar(ref scalar) => scalar.encode(ident),
-            Field::Message(ref message) => message.encode(ident),
-            Field::Map(ref map) => map.encode(ident),
+            Field::Scalar(ref scalar) => scalar.encode(prost_path, ident),
+            Field::Message(ref message) => message.encode(prost_path, ident),
+            Field::Map(ref map) => map.encode(prost_path, ident),
             Field::Oneof(ref oneof) => oneof.encode(ident),
-            Field::Group(ref group) => group.encode(ident),
+            Field::Group(ref group) => group.encode(prost_path, ident),
         }
     }
 
     /// Returns an expression which evaluates to the result of merging a decoded
     /// value into the field.
-    pub fn merge(&self, ident: TokenStream) -> TokenStream {
+    pub fn merge(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         match *self {
-            Field::Scalar(ref scalar) => scalar.merge(ident),
-            Field::Message(ref message) => message.merge(ident),
-            Field::Map(ref map) => map.merge(ident),
+            Field::Scalar(ref scalar) => scalar.merge(prost_path, ident),
+            Field::Message(ref message) => message.merge(prost_path, ident),
+            Field::Map(ref map) => map.merge(prost_path, ident),
             Field::Oneof(ref oneof) => oneof.merge(ident),
-            Field::Group(ref group) => group.merge(ident),
+            Field::Group(ref group) => group.merge(prost_path, ident),
         }
     }
 
     /// Returns an expression which evaluates to the encoded length of the field.
-    pub fn encoded_len(&self, ident: TokenStream) -> TokenStream {
+    pub fn encoded_len(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         match *self {
-            Field::Scalar(ref scalar) => scalar.encoded_len(ident),
-            Field::Map(ref map) => map.encoded_len(ident),
-            Field::Message(ref msg) => msg.encoded_len(ident),
+            Field::Scalar(ref scalar) => scalar.encoded_len(prost_path, ident),
+            Field::Map(ref map) => map.encoded_len(prost_path, ident),
+            Field::Message(ref msg) => msg.encoded_len(prost_path, ident),
             Field::Oneof(ref oneof) => oneof.encoded_len(ident),
-            Field::Group(ref group) => group.encoded_len(ident),
+            Field::Group(ref group) => group.encoded_len(prost_path, ident),
         }
     }
 
@@ -132,18 +134,18 @@ impl Field {
         }
     }
 
-    pub fn default(&self) -> TokenStream {
+    pub fn default(&self, prost_path: &Path) -> TokenStream {
         match *self {
-            Field::Scalar(ref scalar) => scalar.default(),
+            Field::Scalar(ref scalar) => scalar.default(prost_path),
             _ => quote!(::core::default::Default::default()),
         }
     }
 
     /// Produces the fragment implementing debug for the given field.
-    pub fn debug(&self, ident: TokenStream) -> TokenStream {
+    pub fn debug(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         match *self {
             Field::Scalar(ref scalar) => {
-                let wrapper = scalar.debug(quote!(ScalarWrapper));
+                let wrapper = scalar.debug(prost_path, quote!(ScalarWrapper));
                 quote! {
                     {
                         #wrapper
@@ -152,7 +154,7 @@ impl Field {
                 }
             }
             Field::Map(ref map) => {
-                let wrapper = map.debug(quote!(MapWrapper));
+                let wrapper = map.debug(prost_path, quote!(MapWrapper));
                 quote! {
                     {
                         #wrapper
@@ -164,10 +166,10 @@ impl Field {
         }
     }
 
-    pub fn methods(&self, ident: &TokenStream) -> Option<TokenStream> {
+    pub fn methods(&self, prost_path: &Path, ident: &TokenStream) -> Option<TokenStream> {
         match *self {
             Field::Scalar(ref scalar) => scalar.methods(ident),
-            Field::Map(ref map) => map.methods(ident),
+            Field::Map(ref map) => map.methods(prost_path, ident),
             _ => None,
         }
     }
@@ -224,27 +226,18 @@ impl fmt::Display for Label {
 }
 
 /// Get the items belonging to the 'prost' list attribute, e.g. `#[prost(foo, bar="baz")]`.
-fn prost_attrs(attrs: Vec<Attribute>) -> Vec<Meta> {
-    attrs
-        .iter()
-        .flat_map(Attribute::parse_meta)
-        .flat_map(|meta| match meta {
-            Meta::List(MetaList { path, nested, .. }) => {
-                if path.is_ident("prost") {
-                    nested.into_iter().collect()
-                } else {
-                    Vec::new()
-                }
+fn prost_attrs(attrs: Vec<Attribute>) -> Result<Vec<Meta>, Error> {
+    let mut result = Vec::new();
+    for attr in attrs.iter() {
+        if let Meta::List(meta_list) = &attr.meta {
+            if meta_list.path.is_ident("prost") {
+                result.extend(
+                    meta_list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?,
+                )
             }
-            _ => Vec::new(),
-        })
-        .flat_map(|attr| -> Result<_, _> {
-            match attr {
-                NestedMeta::Meta(attr) => Ok(attr),
-                NestedMeta::Lit(lit) => bail!("invalid prost attribute: {:?}", lit),
-            }
-        })
-        .collect()
+        }
+    }
+    Ok(result)
 }
 
 pub fn set_option<T>(option: &mut Option<T>, value: T, message: &str) -> Result<(), Error>
@@ -252,7 +245,7 @@ where
     T: fmt::Debug,
 {
     if let Some(ref existing) = *option {
-        bail!("{}: {:?} and {:?}", message, existing, value);
+        bail!("{message}: {existing:?} and {value:?}");
     }
     *option = Some(value);
     Ok(())
@@ -260,7 +253,7 @@ where
 
 pub fn set_bool(b: &mut bool, message: &str) -> Result<(), Error> {
     if *b {
-        bail!("{}", message);
+        bail!("{message}");
     } else {
         *b = true;
         Ok(())
@@ -275,17 +268,13 @@ fn bool_attr(key: &str, attr: &Meta) -> Result<Option<bool>, Error> {
     }
     match *attr {
         Meta::Path(..) => Ok(Some(true)),
-        Meta::List(ref meta_list) => {
-            // TODO(rustlang/rust#23121): slice pattern matching would make this much nicer.
-            if meta_list.nested.len() == 1 {
-                if let NestedMeta::Lit(Lit::Bool(LitBool { value, .. })) = meta_list.nested[0] {
-                    return Ok(Some(value));
-                }
-            }
-            bail!("invalid {} attribute", key);
-        }
+        Meta::List(ref meta_list) => Ok(Some(meta_list.parse_args::<LitBool>()?.value())),
         Meta::NameValue(MetaNameValue {
-            lit: Lit::Str(ref lit),
+            value:
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(ref lit),
+                    ..
+                }),
             ..
         }) => lit
             .value()
@@ -293,10 +282,14 @@ fn bool_attr(key: &str, attr: &Meta) -> Result<Option<bool>, Error> {
             .map_err(Error::from)
             .map(Option::Some),
         Meta::NameValue(MetaNameValue {
-            lit: Lit::Bool(LitBool { value, .. }),
+            value:
+                Expr::Lit(ExprLit {
+                    lit: Lit::Bool(LitBool { value, .. }),
+                    ..
+                }),
             ..
         }) => Ok(Some(value)),
-        _ => bail!("invalid {} attribute", key),
+        _ => bail!("invalid {key} attribute"),
     }
 }
 
@@ -314,25 +307,20 @@ pub(super) fn tag_attr(attr: &Meta) -> Result<Option<u32>, Error> {
         return Ok(None);
     }
     match *attr {
-        Meta::List(ref meta_list) => {
-            // TODO(rustlang/rust#23121): slice pattern matching would make this much nicer.
-            if meta_list.nested.len() == 1 {
-                if let NestedMeta::Lit(Lit::Int(ref lit)) = meta_list.nested[0] {
-                    return Ok(Some(lit.base10_parse()?));
-                }
-            }
-            bail!("invalid tag attribute: {:?}", attr);
-        }
-        Meta::NameValue(ref meta_name_value) => match meta_name_value.lit {
+        Meta::List(ref meta_list) => Ok(Some(meta_list.parse_args::<LitInt>()?.base10_parse()?)),
+        Meta::NameValue(MetaNameValue {
+            value: Expr::Lit(ref expr),
+            ..
+        }) => match expr.lit {
             Lit::Str(ref lit) => lit
                 .value()
                 .parse::<u32>()
                 .map_err(Error::from)
                 .map(Option::Some),
             Lit::Int(ref lit) => Ok(Some(lit.base10_parse()?)),
-            _ => bail!("invalid tag attribute: {:?}", attr),
+            _ => bail!("invalid tag attribute: {attr:?}"),
         },
-        _ => bail!("invalid tag attribute: {:?}", attr),
+        _ => bail!("invalid tag attribute: {attr:?}"),
     }
 }
 
@@ -341,19 +329,19 @@ fn tags_attr(attr: &Meta) -> Result<Option<Vec<u32>>, Error> {
         return Ok(None);
     }
     match *attr {
-        Meta::List(ref meta_list) => {
-            let mut tags = Vec::with_capacity(meta_list.nested.len());
-            for item in &meta_list.nested {
-                if let NestedMeta::Lit(Lit::Int(ref lit)) = *item {
-                    tags.push(lit.base10_parse()?);
-                } else {
-                    bail!("invalid tag attribute: {:?}", attr);
-                }
-            }
-            Ok(Some(tags))
-        }
+        Meta::List(ref meta_list) => Ok(Some(
+            meta_list
+                .parse_args_with(Punctuated::<LitInt, Token![,]>::parse_terminated)?
+                .iter()
+                .map(LitInt::base10_parse)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
         Meta::NameValue(MetaNameValue {
-            lit: Lit::Str(ref lit),
+            value:
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(ref lit),
+                    ..
+                }),
             ..
         }) => lit
             .value()
@@ -361,6 +349,6 @@ fn tags_attr(attr: &Meta) -> Result<Option<Vec<u32>>, Error> {
             .map(|s| s.trim().parse::<u32>().map_err(Error::from))
             .collect::<Result<Vec<u32>, _>>()
             .map(Some),
-        _ => bail!("invalid tag attribute: {:?}", attr),
+        _ => bail!("invalid tag attribute: {attr:?}"),
     }
 }

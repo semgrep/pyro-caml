@@ -11,37 +11,46 @@
 
 [package]
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.85"
 name = "prost-derive"
-version = "0.11.9"
+version = "0.14.4"
 authors = [
     "Dan Burkert <dan@danburkert.com>",
     "Lucio Franco <luciofranco14@gmail.com>",
+    "Casper Meijn <casper@meijn.net>",
     "Tokio Contributors <team@tokio.rs>",
 ]
-description = "A Protocol Buffers implementation for the Rust Language."
-documentation = "https://docs.rs/prost-derive"
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Generate encoding and decoding implementations for Prost annotated types."
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/tokio-rs/prost"
 
 [lib]
-proc_macro = true
+name = "prost_derive"
+path = "src/lib.rs"
+proc-macro = true
 
 [dependencies.anyhow]
 version = "1.0.1"
 
 [dependencies.itertools]
-version = "0.10"
-features = ["use_alloc"]
-default-features = false
+version = ">=0.10.1, <=0.14"
 
 [dependencies.proc-macro2]
-version = "1"
+version = "1.0.60"
 
 [dependencies.quote]
 version = "1"
 
 [dependencies.syn]
-version = "1.0.3"
+version = "2"
 features = ["extra-traits"]
+
+[lints.clippy]
+collapsible_if = "allow"

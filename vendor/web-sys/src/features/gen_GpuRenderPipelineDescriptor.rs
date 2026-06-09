@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = GPURenderPipelineDescriptor)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "GPURenderPipelineDescriptor")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `GpuRenderPipelineDescriptor` dictionary."]
     #[doc = ""]
@@ -33,23 +33,38 @@ extern "C" {
     #[wasm_bindgen(method, setter = "label")]
     pub fn set_label(this: &GpuRenderPipelineDescriptor, val: &str);
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "GpuPipelineLayout")]
     #[doc = "Get the `layout` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuRenderPipelineDescriptor`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuPipelineLayout`, `GpuRenderPipelineDescriptor`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     #[wasm_bindgen(method, getter = "layout")]
     pub fn get_layout(this: &GpuRenderPipelineDescriptor) -> ::wasm_bindgen::JsValue;
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "GpuPipelineLayout")]
     #[doc = "Change the `layout` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuRenderPipelineDescriptor`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuPipelineLayout`, `GpuRenderPipelineDescriptor`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     #[wasm_bindgen(method, setter = "layout")]
-    pub fn set_layout(this: &GpuRenderPipelineDescriptor, val: &::wasm_bindgen::JsValue);
+    pub fn set_layout(this: &GpuRenderPipelineDescriptor, val: &GpuPipelineLayout);
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "GpuAutoLayoutMode")]
+    #[doc = "Change the `layout` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `GpuAutoLayoutMode`, `GpuRenderPipelineDescriptor`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    #[wasm_bindgen(method, setter = "layout")]
+    pub fn set_layout_gpu_auto_layout_mode(
+        this: &GpuRenderPipelineDescriptor,
+        val: GpuAutoLayoutMode,
+    );
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "GpuDepthStencilState")]
     #[doc = "Get the `depthStencil` field of this object."]
@@ -153,17 +168,34 @@ extern "C" {
 }
 #[cfg(web_sys_unstable_apis)]
 impl GpuRenderPipelineDescriptor {
-    #[cfg(feature = "GpuVertexState")]
+    #[cfg(all(feature = "GpuPipelineLayout", feature = "GpuVertexState",))]
     #[doc = "Construct a new `GpuRenderPipelineDescriptor`."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuRenderPipelineDescriptor`, `GpuVertexState`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuPipelineLayout`, `GpuRenderPipelineDescriptor`, `GpuVertexState`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn new(layout: &::wasm_bindgen::JsValue, vertex: &GpuVertexState) -> Self {
+    pub fn new(layout: &GpuPipelineLayout, vertex: &GpuVertexState) -> Self {
         #[allow(unused_mut)]
         let mut ret: Self = ::wasm_bindgen::JsCast::unchecked_into(::js_sys::Object::new());
         ret.set_layout(layout);
+        ret.set_vertex(vertex);
+        ret
+    }
+    #[cfg(all(feature = "GpuAutoLayoutMode", feature = "GpuVertexState",))]
+    #[doc = "Construct a new `GpuRenderPipelineDescriptor`."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `GpuAutoLayoutMode`, `GpuRenderPipelineDescriptor`, `GpuVertexState`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn new_with_gpu_auto_layout_mode(
+        layout: GpuAutoLayoutMode,
+        vertex: &GpuVertexState,
+    ) -> Self {
+        #[allow(unused_mut)]
+        let mut ret: Self = ::wasm_bindgen::JsCast::unchecked_into(::js_sys::Object::new());
+        ret.set_layout_gpu_auto_layout_mode(layout);
         ret.set_vertex(vertex);
         ret
     }
@@ -174,8 +206,9 @@ impl GpuRenderPipelineDescriptor {
         self
     }
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "GpuPipelineLayout")]
     #[deprecated = "Use `set_layout()` instead."]
-    pub fn layout(&mut self, val: &::wasm_bindgen::JsValue) -> &mut Self {
+    pub fn layout(&mut self, val: &GpuPipelineLayout) -> &mut Self {
         self.set_layout(val);
         self
     }

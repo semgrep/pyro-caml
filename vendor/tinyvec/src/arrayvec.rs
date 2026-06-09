@@ -4,11 +4,11 @@ use core::convert::{TryFrom, TryInto};
 #[cfg(feature = "serde")]
 use core::marker::PhantomData;
 #[cfg(feature = "serde")]
-use serde::de::{
+use serde_core::de::{
   Deserialize, Deserializer, Error as DeserializeError, SeqAccess, Visitor,
 };
 #[cfg(feature = "serde")]
-use serde::ser::{Serialize, SerializeSeq, Serializer};
+use serde_core::ser::{Serialize, SerializeSeq, Serializer};
 
 /// Helper to make an `ArrayVec`.
 ///
@@ -57,7 +57,7 @@ macro_rules! array_vec {
 /// * `ArrayVec` has a variable length, as you add and remove elements. Attempts
 ///   to fill the vec beyond its capacity will cause a panic.
 /// * All of the vec's array slots are always initialized in terms of Rust's
-///   memory model. When you remove a element from a location, the old value at
+///   memory model. When you remove an element from a location, the old value at
 ///   that location is replaced with the type's default value.
 ///
 /// The overall API of this type is intended to, as much as possible, emulate
@@ -87,7 +87,7 @@ macro_rules! array_vec {
 /// assert_eq!(some_ints, more_ints);
 /// ```
 ///
-/// If you have an array and want the _whole thing_ so count as being "in" the
+/// If you have an array and want the _whole thing_ to count as being "in" the
 /// new `ArrayVec` you can use one of the `from` implementations. If you want
 /// _part of_ the array then you can use
 /// [`from_array_len`](ArrayVec::from_array_len):
@@ -626,6 +626,13 @@ impl<A: Array> ArrayVec<A> {
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.len == 0
+  }
+
+  /// Checks if the length is equal to capacity.
+  #[inline(always)]
+  #[must_use]
+  pub fn is_full(&self) -> bool {
+    self.len() == self.capacity()
   }
 
   /// The length of the `ArrayVec` (in elements).
@@ -1257,6 +1264,17 @@ impl<A> ArrayVec<A> {
   pub const fn as_inner(&self) -> &A {
     &self.data
   }
+
+  /// Returns a mutable reference to the inner array of the `ArrayVec`.
+  ///
+  /// This returns the full array, even if the `ArrayVec` length is currently
+  /// less than that.
+  #[inline(always)]
+  #[must_use]
+  #[cfg(feature = "latest_stable_rust")]
+  pub const fn as_mut_inner(&mut self) -> &mut A {
+    &mut self.data
+  }
 }
 
 /// Splicing iterator for `ArrayVec`
@@ -1422,6 +1440,7 @@ impl<A: Array> From<A> for ArrayVec<A> {
 /// The error type returned when a conversion from a slice to an [`ArrayVec`]
 /// fails.
 #[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TryFromSliceError(());
 
 impl core::fmt::Display for TryFromSliceError {
@@ -1576,6 +1595,17 @@ where
   }
 }
 
+#[cfg(feature = "defmt")]
+#[cfg_attr(docs_rs, doc(cfg(feature = "defmt")))]
+impl<A: Array> defmt::Format for ArrayVecIterator<A>
+where
+  A::Item: defmt::Format,
+{
+  fn format(&self, fmt: defmt::Formatter<'_>) {
+    defmt::write!(fmt, "ArrayVecIterator({:?})", self.as_slice())
+  }
+}
+
 impl<A: Array> IntoIterator for ArrayVec<A> {
   type Item = A::Item;
   type IntoIter = ArrayVecIterator<A>;
@@ -1712,20 +1742,18 @@ where
 {
   #[allow(clippy::missing_inline_in_public_items)]
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
-    write!(f, "[")?;
-    if f.alternate() && !self.is_empty() {
-      write!(f, "\n    ")?;
-    }
-    for (i, elem) in self.iter().enumerate() {
-      if i > 0 {
-        write!(f, ",{}", if f.alternate() { "\n    " } else { " " })?;
-      }
-      Debug::fmt(elem, f)?;
-    }
-    if f.alternate() && !self.is_empty() {
-      write!(f, ",\n")?;
-    }
-    write!(f, "]")
+    <[A::Item] as Debug>::fmt(self.as_slice(), f)
+  }
+}
+
+#[cfg(feature = "defmt")]
+#[cfg_attr(docs_rs, doc(cfg(feature = "defmt")))]
+impl<A: Array> defmt::Format for ArrayVec<A>
+where
+  A::Item: defmt::Format,
+{
+  fn format(&self, fmt: defmt::Formatter<'_>) {
+    defmt::Format::format(self.as_slice(), fmt)
   }
 }
 
@@ -2055,5 +2083,27 @@ mod test {
     let mut av: ArrayVec<[i32; 0]> = ArrayVec::new();
     av.retain_mut(|&mut x| x % 2 == 0);
     assert_eq!(av.len(), 0);
+  }
+
+  #[cfg(feature = "alloc")]
+  #[test]
+  fn array_like_debug() {
+    #[derive(Debug, Default, Copy, Clone)]
+    struct S {
+      x: u8,
+      y: u8,
+    }
+
+    use core::fmt::Write;
+
+    let mut ar: [S; 2] = [S { x: 1, y: 2 }, S { x: 3, y: 4 }];
+    let mut buf_ar = alloc::string::String::new();
+    write!(&mut buf_ar, "{ar:#?}");
+
+    let av: ArrayVec<[S; 2]> = ArrayVec::from(ar);
+    let mut buf_av = alloc::string::String::new();
+    write!(&mut buf_av, "{av:#?}");
+
+    assert_eq!(buf_av, buf_ar)
   }
 }

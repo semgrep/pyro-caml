@@ -14,11 +14,12 @@ use crate::builder::Str;
 use crate::builder::StyledStr;
 use crate::builder::Styles;
 use crate::builder::{Arg, Command};
-use crate::output::display_width;
-use crate::output::wrap;
-use crate::output::Usage;
 use crate::output::TAB;
 use crate::output::TAB_WIDTH;
+use crate::output::Usage;
+use crate::output::display_width;
+use crate::output::wrap;
+use crate::util::Escape;
 use crate::util::FlatSet;
 
 /// `clap` auto-generated help writer
@@ -657,12 +658,15 @@ impl HelpTemplate<'_, '_> {
         help.indent("", &trailing_indent);
         self.writer.push_styled(&help);
 
+        let mut has_possible_values = false;
         if let Some(arg) = arg {
             if !arg.is_hide_possible_values_set() && self.use_long_pv(arg) {
                 const DASH_SPACE: usize = "- ".len();
                 let possible_vals = arg.get_possible_values();
                 if !possible_vals.is_empty() {
                     debug!("HelpTemplate::help: Found possible vals...{possible_vals:?}");
+                    has_possible_values = true;
+
                     let longest = possible_vals
                         .iter()
                         .filter(|f| !f.is_hide_set())
@@ -709,7 +713,7 @@ impl HelpTemplate<'_, '_> {
 
         if !spec_vals.is_empty() && next_line_specs {
             let mut help = StyledStr::new();
-            if !help_is_empty {
+            if !help_is_empty || has_possible_values {
                 let sep = "\n\n";
                 help.push_str(sep);
             }
@@ -792,12 +796,9 @@ impl HelpTemplate<'_, '_> {
                 .default_vals
                 .iter()
                 .map(|dv| dv.to_string_lossy())
-                .map(|dv| {
-                    if dv.contains(char::is_whitespace) {
-                        Cow::from(format!("{dv:?}"))
-                    } else {
-                        dv
-                    }
+                .map(|dv| match Escape(dv.as_ref()).to_cow() {
+                    Cow::Borrowed(_) => dv,
+                    Cow::Owned(escaped) => Cow::Owned(escaped),
                 })
                 .collect::<Vec<_>>()
                 .join(" ");

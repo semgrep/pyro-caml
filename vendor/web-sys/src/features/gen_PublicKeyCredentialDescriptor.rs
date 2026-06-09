@@ -4,7 +4,10 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = PublicKeyCredentialDescriptor)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "PublicKeyCredentialDescriptor"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `PublicKeyCredentialDescriptor` dictionary."]
     #[doc = ""]
@@ -20,6 +23,21 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`*"]
     #[wasm_bindgen(method, setter = "id")]
     pub fn set_id(this: &PublicKeyCredentialDescriptor, val: &::js_sys::Object);
+    #[doc = "Change the `id` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`*"]
+    #[wasm_bindgen(method, setter = "id")]
+    pub fn set_id_buffer_source(this: &PublicKeyCredentialDescriptor, val: &::js_sys::Object);
+    #[doc = "Change the `id` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`*"]
+    #[wasm_bindgen(method, setter = "id")]
+    pub fn set_id_u8_slice(this: &PublicKeyCredentialDescriptor, val: &mut [u8]);
+    #[doc = "Change the `id` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`*"]
+    #[wasm_bindgen(method, setter = "id")]
+    pub fn set_id_u8_array(this: &PublicKeyCredentialDescriptor, val: &::js_sys::Uint8Array);
     #[doc = "Get the `transports` field of this object."]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`*"]
@@ -52,6 +70,28 @@ impl PublicKeyCredentialDescriptor {
         #[allow(unused_mut)]
         let mut ret: Self = ::wasm_bindgen::JsCast::unchecked_into(::js_sys::Object::new());
         ret.set_id(id);
+        ret.set_type(type_);
+        ret
+    }
+    #[cfg(feature = "PublicKeyCredentialType")]
+    #[doc = "Construct a new `PublicKeyCredentialDescriptor`."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`, `PublicKeyCredentialType`*"]
+    pub fn new_with_u8_slice(id: &mut [u8], type_: PublicKeyCredentialType) -> Self {
+        #[allow(unused_mut)]
+        let mut ret: Self = ::wasm_bindgen::JsCast::unchecked_into(::js_sys::Object::new());
+        ret.set_id_u8_slice(id);
+        ret.set_type(type_);
+        ret
+    }
+    #[cfg(feature = "PublicKeyCredentialType")]
+    #[doc = "Construct a new `PublicKeyCredentialDescriptor`."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `PublicKeyCredentialDescriptor`, `PublicKeyCredentialType`*"]
+    pub fn new_with_u8_array(id: &::js_sys::Uint8Array, type_: PublicKeyCredentialType) -> Self {
+        #[allow(unused_mut)]
+        let mut ret: Self = ::wasm_bindgen::JsCast::unchecked_into(::js_sys::Object::new());
+        ret.set_id_u8_array(id);
         ret.set_type(type_);
         ret
     }

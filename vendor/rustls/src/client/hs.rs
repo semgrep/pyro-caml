@@ -590,11 +590,12 @@ pub(super) fn process_alpn_protocol(
     common: &mut CommonState,
     offered_protocols: &[ProtocolName],
     selected: Option<&ProtocolName>,
+    check_selected_offered: bool,
 ) -> Result<(), Error> {
     common.alpn_protocol = selected.map(ToOwned::to_owned);
 
     if let Some(alpn_protocol) = &common.alpn_protocol {
-        if !offered_protocols.contains(alpn_protocol) {
+        if check_selected_offered && !offered_protocols.contains(alpn_protocol) {
             return Err(common.send_fatal_alert(
                 AlertDescription::IllegalParameter,
                 PeerMisbehaved::SelectedUnofferedApplicationProtocol,
@@ -743,6 +744,7 @@ impl State<ClientConnectionData> for ExpectServerHello {
                     .selected_protocol
                     .as_ref()
                     .map(|s| s.as_ref()),
+                self.input.config.check_selected_alpn,
             )?;
         }
 
@@ -960,13 +962,13 @@ impl ExpectServerHelloOrHelloRetryRequest {
 
         // If we offered ECH, we need to confirm that the server accepted it.
         match (self.next.ech_state.as_ref(), cs.tls13()) {
-            (Some(ech_state), Some(tls13_cs)) => {
-                if !ech_state.confirm_hrr_acceptance(hrr, tls13_cs, cx.common)? {
-                    // If the server did not confirm, then note the new ECH status but
-                    // continue the handshake. We will abort with an ECH required error
-                    // at the end.
-                    cx.data.ech_status = EchStatus::Rejected;
-                }
+            // If the server did not confirm, then note the new ECH status but
+            // continue the handshake. We will abort with an ECH required error
+            // at the end.
+            (Some(ech_state), Some(tls13_cs))
+                if !ech_state.confirm_hrr_acceptance(hrr, tls13_cs, cx.common)? =>
+            {
+                cx.data.ech_status = EchStatus::Rejected
             }
             (Some(_), None) => {
                 unreachable!("ECH state should only be set when TLS 1.3 was negotiated")

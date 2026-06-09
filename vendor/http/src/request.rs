@@ -118,9 +118,6 @@ use crate::{Extensions, Result, Uri};
 /// Deserialize a request of bytes via json:
 ///
 /// ```
-/// # extern crate serde;
-/// # extern crate serde_json;
-/// # extern crate http;
 /// use http::Request;
 /// use serde::de;
 ///
@@ -138,9 +135,6 @@ use crate::{Extensions, Result, Uri};
 /// Or alternatively, serialize the body of a request to json
 ///
 /// ```
-/// # extern crate serde;
-/// # extern crate serde_json;
-/// # extern crate http;
 /// use http::Request;
 /// use serde::ser;
 ///
@@ -186,7 +180,7 @@ pub struct Parts {
 
 /// An HTTP request builder
 ///
-/// This type can be used to construct an instance or `Request`
+/// This type can be used to construct an instance of `Request`
 /// through a builder-like pattern.
 #[derive(Debug)]
 pub struct Builder {

@@ -7,6 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.63](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.62...cc-v1.2.63) - 2026-05-29
+
+### Other
+
+- Update shlex requirement from 1.3.0 to 2.0.1 ([#1736](https://github.com/rust-lang/cc-rs/pull/1736))
+
+## [1.2.62](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.61...cc-v1.2.62) - 2026-05-08
+
+### Other
+
+- Regenerate target info ([#1721](https://github.com/rust-lang/cc-rs/pull/1721))
+- Allow exceptions on wasm platforms ([#1714](https://github.com/rust-lang/cc-rs/pull/1714))
+- Add relibc env ([#1710](https://github.com/rust-lang/cc-rs/pull/1710))
+- recognize sh4 architecture in parse_arch() ([#1712](https://github.com/rust-lang/cc-rs/pull/1712))
+
+## [1.2.61](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.60...cc-v1.2.61) - 2026-04-24
+
+### Other
+
+- fix `OutputKind::Capture` documentation ([#1705](https://github.com/rust-lang/cc-rs/pull/1705))
+
+## [1.2.60](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.59...cc-v1.2.60) - 2026-04-10
+
+### Fixed
+
+- *(ar)* suppress warnings from `D` modifier probe ([#1700](https://github.com/rust-lang/cc-rs/pull/1700))
+
+## [1.2.59](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.58...cc-v1.2.59) - 2026-04-03
+
+### Fixed
+
+- *(ar)* deterministic archives with `D` modifier ([#1697](https://github.com/rust-lang/cc-rs/pull/1697))
+
+### Other
+
+- Regenerate target info ([#1698](https://github.com/rust-lang/cc-rs/pull/1698))
+- Fix target abi parsing for sanitiser targets ([#1695](https://github.com/rust-lang/cc-rs/pull/1695))
+
+## [1.2.58](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.57...cc-v1.2.58) - 2026-03-27
+
+### Other
+
+- Update Compile-time Requirements to add info about clang-cl.exe ([#1693](https://github.com/rust-lang/cc-rs/pull/1693))
+
+## [1.2.57](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.56...cc-v1.2.57) - 2026-03-13
+
+### Other
+
+- Size archiver batches according to argument length not argument count ([#1689](https://github.com/rust-lang/cc-rs/pull/1689))
+- Added `Build::env` for setting environment variables of compiler invocations and other child processes ([#1656](https://github.com/rust-lang/cc-rs/pull/1656) [#1682](https://github.com/rust-lang/cc-rs/pull/1682))
+
+## [1.2.56](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.55...cc-v1.2.56) - 2026-02-13
+
+### Other
+
+- Regenerate target info ([#1676](https://github.com/rust-lang/cc-rs/pull/1676))
+- Fix `clang-cl` target when cross-compiling ([#1670](https://github.com/rust-lang/cc-rs/pull/1670))
+
+## [1.2.55](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.54...cc-v1.2.55) - 2026-01-30
+
+### Other
+
+- Regenerate target info ([#1667](https://github.com/rust-lang/cc-rs/pull/1667))
+- Fix RUSTFLAGS typo in test-linker-plugin-lto ([#1665](https://github.com/rust-lang/cc-rs/pull/1665))
+- Disable PIC for armv7-sony-vita-newlibeabihf ([#1664](https://github.com/rust-lang/cc-rs/pull/1664))
+
+## [1.2.54](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.53...cc-v1.2.54) - 2026-01-23
+
+### Other
+
+- Fix x86_64-unknown-linux-gnuasan parsing ([#1661](https://github.com/rust-lang/cc-rs/pull/1661))
+- Regenerate target info ([#1660](https://github.com/rust-lang/cc-rs/pull/1660))
+
+## [1.2.53](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.52...cc-v1.2.53) - 2026-01-16
+
+### Other
+
+- Add missing RISC-V targets ([#1657](https://github.com/rust-lang/cc-rs/pull/1657))
+
+## [1.2.52](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.51...cc-v1.2.52) - 2026-01-09
+
+### Other
+
+- Fix contradictory doc for CC compiler in crate doc ([#1650](https://github.com/rust-lang/cc-rs/pull/1650))
+- Have CUDA compilaion check for sbsa-linux when targeting aarch64. ([#1647](https://github.com/rust-lang/cc-rs/pull/1647))
+- Update link for -Cdwarf-version; Remove -Z (stabilized in 1.88) ([#1648](https://github.com/rust-lang/cc-rs/pull/1648))
+- Fix Build::env_tool to check for .exe on windows ([#1646](https://github.com/rust-lang/cc-rs/pull/1646))
+
+## [1.2.51](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.50...cc-v1.2.51) - 2025-12-26
+
+### Other
+
+- Regenerate target info ([#1642](https://github.com/rust-lang/cc-rs/pull/1642))
+- Update Readmes ([#1641](https://github.com/rust-lang/cc-rs/pull/1641))
+
+## [1.2.50](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.49...cc-v1.2.50) - 2025-12-19
+
+### Other
+
+- Add tests for `OUT_DIR` escape for '..' file paths (#1631)
+- Fix #283: Make warnings(false) actually suppress compiler warnings ([#1633](https://github.com/rust-lang/cc-rs/pull/1633))
+
+## [1.2.49](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.48...cc-v1.2.49) - 2025-12-06
+
+### Other
+
+- Fix run_output to prevent infinite blocking ([#1627](https://github.com/rust-lang/cc-rs/pull/1627))
+- Fix detect_family deadlock ([#1626](https://github.com/rust-lang/cc-rs/pull/1626))
+- Fix link in new debug_str doc comment ([#1625](https://github.com/rust-lang/cc-rs/pull/1625))
+- Support more of Cargo's debug levels with Build::debug_str ([#1624](https://github.com/rust-lang/cc-rs/pull/1624))
+
+## [1.2.48](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.47...cc-v1.2.48) - 2025-11-28
+
+### Other
+
+- Regenerate target info ([#1620](https://github.com/rust-lang/cc-rs/pull/1620))
+
+## [1.2.47](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.46...cc-v1.2.47) - 2025-11-21
+
+### Other
+
+- add helenos linker identifications ([#1615](https://github.com/rust-lang/cc-rs/pull/1615))
+
+## [1.2.46](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.45...cc-v1.2.46) - 2025-11-14
+
+### Other
+
+- Add Visual Studio 2026 support ([#1609](https://github.com/rust-lang/cc-rs/pull/1609))
+
+## [1.2.45](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.44...cc-v1.2.45) - 2025-11-07
+
+### Other
+
+- Regenerate target info ([#1606](https://github.com/rust-lang/cc-rs/pull/1606))
+- Use a default check for the "env" variable in apple_sdk_name ([#1605](https://github.com/rust-lang/cc-rs/pull/1605))
+
 ## [1.2.44](https://github.com/rust-lang/cc-rs/compare/cc-v1.2.43...cc-v1.2.44) - 2025-10-31
 
 ### Other
