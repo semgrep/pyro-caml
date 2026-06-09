@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = VideoConfiguration)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "VideoConfiguration")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `VideoConfiguration` dictionary."]
     #[doc = ""]
@@ -20,6 +20,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `VideoConfiguration`*"]
     #[wasm_bindgen(method, setter = "bitrate")]
     pub fn set_bitrate(this: &VideoConfiguration, val: f64);
+    #[doc = "Change the `bitrate` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `VideoConfiguration`*"]
+    #[wasm_bindgen(method, setter = "bitrate")]
+    pub fn set_bitrate_u32(this: &VideoConfiguration, val: u32);
+    #[doc = "Change the `bitrate` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `VideoConfiguration`*"]
+    #[wasm_bindgen(method, setter = "bitrate")]
+    pub fn set_bitrate_f64(this: &VideoConfiguration, val: f64);
     #[doc = "Get the `contentType` field of this object."]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `VideoConfiguration`*"]

@@ -11,11 +11,12 @@
 
 [package]
 edition = "2021"
-rust-version = "1.64"
+rust-version = "1.66"
 name = "pyroscope"
-version = "0.5.8"
+version = "2.0.6"
 authors = ["Abid Omar <contact@omarabid.com>"]
 build = false
+autolib = false
 autobins = false
 autoexamples = false
 autotests = false
@@ -23,7 +24,7 @@ autobenches = false
 description = """
 Pyroscope Profiler Agent for continuous profiling of Rust, Python and Ruby applications.
 """
-homepage = "https://pyroscope.io/docs/rust"
+homepage = "https://grafana.com/docs/pyroscope/latest/configure-client/language-sdks/rust/"
 documentation = "https://docs.rs/pyroscope"
 readme = "README.md"
 keywords = [
@@ -33,7 +34,168 @@ keywords = [
     "pprof",
 ]
 license = "Apache-2.0"
-repository = "https://github.com/pyroscope-io/pyroscope-rs"
+repository = "https://github.com/grafana/pyroscope-rs"
+
+[features]
+backend-jemalloc = ["dep:jemalloc_pprof"]
+backend-pprof-rs = [
+    "dep:backtrace",
+    "dep:backtrace",
+    "dep:once_cell",
+    "dep:nix",
+    "dep:spin",
+    "dep:tempfile",
+    "dep:findshlibs",
+    "dep:smallvec",
+    "dep:framehop",
+    "dep:memmap2",
+    "dep:object",
+    "dep:aligned-vec",
+    "dep:symbolic-demangle",
+]
+default = ["rustls-tls"]
+native-tls = ["reqwest/native-tls"]
+native-tls-vendored = ["reqwest/native-tls-vendored"]
+rustls-no-provider = ["reqwest/rustls-no-provider"]
+rustls-tls = ["reqwest/rustls"]
+
+[lib]
+name = "pyroscope"
+path = "src/lib.rs"
+
+[[example]]
+name = "jemalloc"
+path = "examples/jemalloc.rs"
+required-features = ["backend-jemalloc"]
+
+[[test]]
+name = "agent"
+path = "tests/agent.rs"
+
+[[test]]
+name = "pprof_backend"
+path = "tests/pprof_backend.rs"
+
+[[test]]
+name = "session"
+path = "tests/session.rs"
+
+[[test]]
+name = "timer"
+path = "tests/timer.rs"
+
+[[test]]
+name = "timer-epoll"
+path = "tests/timer-epoll.rs"
+
+[dependencies.aligned-vec]
+version = "0.6"
+optional = true
+
+[dependencies.backtrace]
+version = "0.3"
+optional = true
+
+[dependencies.findshlibs]
+version = "0.10"
+optional = true
+
+[dependencies.framehop]
+version = "0.16"
+optional = true
+
+[dependencies.jemalloc_pprof]
+version = "0.8"
+features = ["symbolize"]
+optional = true
+
+[dependencies.lazy_static]
+version = "1.5.0"
+
+[dependencies.libc]
+version = "^0.2.124"
+
+[dependencies.libflate]
+version = "2.1.0"
+
+[dependencies.log]
+version = "0.4"
+
+[dependencies.memmap2]
+version = "0.9"
+optional = true
+
+[dependencies.nix]
+version = "0.26"
+features = [
+    "signal",
+    "fs",
+]
+optional = true
+default-features = false
+
+[dependencies.object]
+version = "0.39"
+optional = true
+
+[dependencies.once_cell]
+version = "1.9"
+optional = true
+
+[dependencies.prost]
+version = "0.14"
+
+[dependencies.reqwest]
+version = "0.13"
+features = [
+    "blocking",
+    "query",
+]
+default-features = false
+
+[dependencies.serde_json]
+version = "1.0.115"
+
+[dependencies.smallvec]
+version = "1.7"
+optional = true
+
+[dependencies.spin]
+version = "0.12"
+optional = true
+
+[dependencies.symbolic-demangle]
+version = "13.1.0"
+features = ["rust"]
+optional = true
+default-features = false
+
+[dependencies.tempfile]
+version = "3.1"
+optional = true
+
+[dependencies.thiserror]
+version = "2.0"
+
+[dependencies.url]
+version = "2.2.2"
+
+[dependencies.uuid]
+version = "1.20.0"
+features = ["v4"]
+
+[dev-dependencies.assert_matches]
+version = "=1.5.0"
+
+[dev-dependencies.claims]
+version = "=0.8.0"
+
+[dev-dependencies.env_logger]
+version = "=0.11.10"
+
+[dev-dependencies.tikv-jemallocator]
+version = "=0.6.1"
+features = ["profiling"]
 
 [profile.bench]
 opt-level = 3
@@ -58,6 +220,7 @@ codegen-units = 1
 debug = 0
 debug-assertions = false
 rpath = false
+strip = "symbols"
 
 [profile.test]
 opt-level = 1
@@ -66,134 +229,3 @@ codegen-units = 4
 debug = 2
 debug-assertions = true
 rpath = false
-
-[lib]
-name = "pyroscope"
-path = "src/lib.rs"
-
-[[example]]
-name = "async"
-path = "examples/async.rs"
-
-[[example]]
-name = "auth"
-path = "examples/auth.rs"
-
-[[example]]
-name = "basic"
-path = "examples/basic.rs"
-
-[[example]]
-name = "error"
-path = "examples/error.rs"
-
-[[example]]
-name = "internal-backend-pprof"
-path = "examples/internal/backend-pprof.rs"
-
-[[example]]
-name = "internal-backend-void"
-path = "examples/internal/backend-void.rs"
-
-[[example]]
-name = "internal-backend-void-run"
-path = "examples/internal/backend-void-run.rs"
-
-[[example]]
-name = "internal-pyspy-connect"
-path = "examples/internal/pyspy-connect.rs"
-
-[[example]]
-name = "internal-rbspy-connect"
-path = "examples/internal/rbspy-connect.rs"
-
-[[example]]
-name = "internal-timer"
-path = "examples/internal/timer.rs"
-
-[[example]]
-name = "multi-thread"
-path = "examples/multi-thread.rs"
-
-[[example]]
-name = "multi-thread-report"
-path = "examples/multi-thread-report.rs"
-
-[[example]]
-name = "tags"
-path = "examples/tags.rs"
-
-[[example]]
-name = "transform"
-path = "examples/transform.rs"
-
-[[example]]
-name = "with-logger"
-path = "examples/with-logger.rs"
-
-[[test]]
-name = "agent"
-path = "tests/agent.rs"
-
-[[test]]
-name = "session"
-path = "tests/session.rs"
-
-[[test]]
-name = "timer"
-path = "tests/timer.rs"
-
-[[test]]
-name = "timer-epoll"
-path = "tests/timer-epoll.rs"
-
-[dependencies.libc]
-version = "^0.2.124"
-
-[dependencies.libflate]
-version = "1.2.0"
-
-[dependencies.log]
-version = "0.4"
-
-[dependencies.names]
-version = "0.14.0"
-default-features = false
-
-[dependencies.prost]
-version = "0.11"
-
-[dependencies.reqwest]
-version = "0.12"
-features = ["blocking"]
-default-features = false
-
-[dependencies.serde_json]
-version = "1.0.115"
-
-[dependencies.thiserror]
-version = "1.0"
-
-[dependencies.url]
-version = "2.2.2"
-
-[dependencies.winapi]
-version = "0.3.9"
-
-[dev-dependencies.assert_matches]
-version = "1"
-
-[dev-dependencies.claims]
-version = "0.7.1"
-
-[dev-dependencies.pretty_env_logger]
-version = "0.5.0"
-
-[dev-dependencies.tokio]
-version = "1.18"
-features = ["full"]
-
-[features]
-default = ["rustls-tls"]
-native-tls = ["reqwest/native-tls"]
-rustls-tls = ["reqwest/rustls-tls"]

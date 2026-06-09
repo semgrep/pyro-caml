@@ -1,9 +1,9 @@
 use std::{collections::LinkedList, path::Path};
 
+use nix::libc::pthread_t;
 use ocaml::{FromValue, Runtime};
 use pyroscope::{
-    backend::{BackendConfig, StackFrame, StackTrace},
-    PyroscopeError,
+    PyroscopeError, ThreadId, backend::{BackendConfig, StackFrame, StackTrace}
 };
 
 #[derive(Debug, Clone)]
@@ -83,7 +83,7 @@ impl CamlStackTrace {
         StackTrace::new(
             backend_config,
             Some(pid),
-            Some(self.thread_id as u64),
+            Some(ThreadId::from(self.thread_id as pthread_t)),
             Some(self.thread_name),
             frames,
         )

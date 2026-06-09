@@ -16,9 +16,10 @@
 
 include!("include.rs");
 
-extern crate zerocopy as _zerocopy;
+extern crate zerocopy_renamed as _zerocopy;
 
 #[derive(_zerocopy::KnownLayout, _zerocopy::FromBytes, _zerocopy::Unaligned)]
+#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct TypeParams<'a, T, I: imp::Iterator> {
     a: T,
@@ -36,3 +37,24 @@ util_assert_impl_all!(
         _zerocopy::FromBytes,
         _zerocopy::Unaligned
 );
+
+// Regression test for #2177.
+//
+// This test ensures that `#[derive(KnownLayout)]` does not trigger the
+// `private_bounds` lint when used on a public struct in a macro.
+mod issue_2177 {
+    #![deny(private_bounds)]
+    // We need to access `_zerocopy` from the parent module.
+    use super::_zerocopy;
+
+    macro_rules! define {
+        ($name:ident, $repr:ty) => {
+            #[derive(_zerocopy::KnownLayout)]
+            #[zerocopy(crate = "zerocopy_renamed")]
+            #[repr(C)]
+            pub struct $name($repr);
+        };
+    }
+
+    define!(Foo, u8);
+}

@@ -1,8 +1,6 @@
 use ocaml::Runtime;
 use pyroscope::{
-    backend::{Backend, BackendConfig, Report, Rule, Ruleset, StackBuffer, StackFrame, StackTrace},
-    error::Result,
-    PyroscopeError,
+    PyroscopeError, backend::{Backend, BackendConfig, Report, ReportBatch, ReportData, StackBuffer, StackFrame, StackTrace, ThreadTag, ThreadTagsSet}, error::Result
 };
 use std::{
     cell::RefCell,
@@ -23,7 +21,7 @@ const LOG_TAG: &str = "Pyro_caml::backend::camlspy_backend";
 // locks are implemented. So we cheat here and use a thread local runtime
 thread_local! {
     static OCAML_GC: RefCell<Runtime> =  RefCell::new(ocaml::init()) ;
-    static OCAML_CURSOR: OnceLock<ocaml_intf::Cursor> = OnceLock::new();
+    static OCAML_CURSOR: OnceLock<ocaml_intf::Cursor> = const { OnceLock::new() };
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +70,7 @@ impl CamlSpyConfig {
 pub struct CamlSpy {
     buffer: Arc<Mutex<StackBuffer>>,
     running: Arc<AtomicBool>,
-    ruleset: Arc<Mutex<Ruleset>>,
+    tagset: Arc<Mutex<ThreadTagsSet>>,
     backend_config: Arc<Mutex<BackendConfig>>,
     config: CamlSpyConfig,
     sampler_thread: Option<JoinHandle<()>>,
@@ -83,7 +81,7 @@ impl CamlSpy {
         CamlSpy {
             buffer: Arc::new(Mutex::new(StackBuffer::default())),
             running: Arc::new(AtomicBool::new(false)),
-            ruleset: Arc::new(Mutex::new(Ruleset::default())),
+            tagset: Arc::new(Mutex::new(ThreadTagsSet::default())),
             backend_config: Arc::new(Mutex::new(backend_config)),
             config,
             sampler_thread: None,
@@ -92,22 +90,10 @@ impl CamlSpy {
 }
 
 impl Backend for CamlSpy {
-    fn spy_name(&self) -> Result<String> {
-        Ok("camlspy".to_string())
-    }
-
-    fn spy_extension(&self) -> Result<Option<String>> {
-        Ok(Some("cpu".to_string()))
-    }
-
-    fn sample_rate(&self) -> Result<u32> {
-        Ok(self.config.sample_rate)
-    }
-
     fn initialize(&mut self) -> Result<()> {
         self.running.store(true, Ordering::Relaxed);
         let running = self.running.clone();
-        let ruleset = self.ruleset.clone();
+        let tagset = self.tagset.clone();
         let backend_config = self.backend_config.clone();
         let buffer = self.buffer.clone();
         let config = self.config.clone();
@@ -122,7 +108,7 @@ impl Backend for CamlSpy {
 
         let empty_stack_trace = StackTrace::new(
             &self.backend_config.lock().unwrap(),
-            Some(config.pid as u32),
+            Some(config.pid),
             None,
             None,
             vec![empty_frame],
@@ -157,7 +143,7 @@ impl Backend for CamlSpy {
 
                 log::trace!(target:LOG_TAG, "recording stack frames");
                 for st in stack_frames.into_iter() {
-                    let stack_trace = st + &ruleset.lock().expect("Failed to lock ruleset").clone();
+                    let stack_trace = st.add_tag_rules(&tagset.lock().expect("Failed to lock ruleset"));
                     buffer
                         .lock()
                         .expect("Failed to lock buffer") // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
@@ -191,39 +177,34 @@ impl Backend for CamlSpy {
         Ok(())
     }
 
-    fn report(&mut self) -> Result<Vec<Report>> {
+    fn report(&mut self) -> Result<ReportBatch> {
         // first check if the thread has finished
-        if let Some(handle) = &self.sampler_thread {
-            if handle.is_finished() {
-                return Err(PyroscopeError::new(
-                    "CamlSpy: Sampler thread has exited unexpectedly",
-                ));
-            }
+        if let Some(handle) = &self.sampler_thread && handle.is_finished() {
+            return Err(PyroscopeError::new(
+                "CamlSpy: Sampler thread has exited unexpectedly",
+            ));
         }
         let mut buffer: MutexGuard<'_, StackBuffer> = self.buffer.lock()?;
         let reports: Vec<Report> = buffer.deref().to_owned().into();
         buffer.clear();
-        Ok(reports)
+
+        let report_batch: ReportBatch = ReportBatch { 
+            profile_type: "process_cpu".to_string(),
+            data: ReportData::Reports(reports)
+        };
+        
+        Ok(report_batch)
     }
 
-    fn add_rule(&self, rule: Rule) -> Result<()> {
-        self.ruleset.lock()?.add_rule(rule)?;
+    fn add_tag(&self, tag: ThreadTag) -> Result<()> {
+        self.tagset.lock()?.add(tag)?;
 
         Ok(())
     }
 
-    fn remove_rule(&self, rule: Rule) -> Result<()> {
-        self.ruleset.lock()?.remove_rule(rule)?;
+    fn remove_tag(&self, tag: ThreadTag) -> Result<()> {
+        self.tagset.lock()?.remove(tag)?;
 
         Ok(())
-    }
-
-    fn set_config(&self, config: BackendConfig) {
-        let mut backend_config = self.backend_config.lock().unwrap();
-        *backend_config = config;
-    }
-
-    fn get_config(&self) -> Result<BackendConfig> {
-        Ok(self.backend_config.lock().unwrap().deref().clone())
     }
 }

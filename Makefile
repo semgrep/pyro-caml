@@ -2,9 +2,7 @@
 all: build
 
 vendor:
-	cargo update
-	cargo vendor +stable-aarch64-apple-darwin --locked
-	cargo vendor +x86_64-unknown-linux-musl --locked
+	cargo vendor --locked vendor
 
 build:
 	dune build

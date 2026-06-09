@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     marker::PhantomData,
-    str::FromStr,
     sync::{
         mpsc::{self, Sender},
         Arc, Condvar, Mutex,
@@ -10,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    backend::{void_backend, BackendReady, BackendUninitialized, Report, Rule, Tag, VoidConfig},
+    backend::{BackendReady, BackendUninitialized, Report, Tag},
     error::Result,
     session::{Session, SessionManager, SessionSignal},
     timer::{Timer, TimerSignal},
@@ -18,18 +17,18 @@ use crate::{
     PyroscopeError,
 };
 
-use crate::backend::BackendImpl;
-use crate::pyroscope::Compression::GZIP;
-use crate::pyroscope::ReportEncoding::PPROF;
+use crate::backend::{BackendImpl, ThreadTag};
 
 const LOG_TAG: &str = "Pyroscope::Agent";
+const PPROFRS_SPY_NAME: &str = "pyroscope-rs";
+const PPROFRS_SPY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Pyroscope Agent Configuration. This is the configuration that is passed to the agent.
 ///
 /// # Example
 /// ```
 /// use pyroscope::pyroscope::PyroscopeConfig;
-/// let config = PyroscopeConfig::new("http://localhost:8080", "my-app");
+/// let config = PyroscopeConfig::new("http://localhost:8080", "my-app", 100, "pyspy", "0.8.16");
 /// ```
 #[derive(Clone, Debug)]
 pub struct PyroscopeConfig {
@@ -43,14 +42,11 @@ pub struct PyroscopeConfig {
     pub sample_rate: u32,
     /// Spy Name
     pub spy_name: String,
-    /// Authentication Token
-    pub auth_token: Option<String>,
+    /// Spy Version
+    pub spy_version: String,
     pub basic_auth: Option<BasicAuth>,
     /// Function to apply
     pub func: Option<fn(Report) -> Report>,
-    /// Pyroscope http request body compression
-    pub compression: Option<Compression>,
-    pub report_encoding: ReportEncoding,
     pub tenant_id: Option<String>,
     pub http_headers: HashMap<String, String>,
 }
@@ -65,18 +61,13 @@ impl Default for PyroscopeConfig {
     fn default() -> Self {
         Self {
             url: "http://localhost:4040".to_string(),
-            application_name: names::Generator::default()
-                .next()
-                .unwrap_or_else(|| "unassigned.app".to_string())
-                .replace('-', "."),
+            application_name: "undefined".to_string(),
             tags: HashMap::new(),
             sample_rate: 100u32,
-            spy_name: "undefined".to_string(),
-            auth_token: None,
+            spy_name: PPROFRS_SPY_NAME.to_string(),
+            spy_version: PPROFRS_SPY_VERSION.to_string(),
             basic_auth: None,
             func: None,
-            compression: Some(GZIP),
-            report_encoding: PPROF,
             tenant_id: None,
             http_headers: HashMap::new(),
         }
@@ -84,25 +75,29 @@ impl Default for PyroscopeConfig {
 }
 
 impl PyroscopeConfig {
-    /// Create a new PyroscopeConfig object. url and application_name are required.
-    /// tags and sample_rate are optional. If sample_rate is not specified, it will default to 100.
+    /// Create a new PyroscopeConfig object.
     ///
     /// # Example
-    /// ```ignore
-    /// let config = PyroscopeConfig::new("http://localhost:8080", "my-app");
     /// ```
-    pub fn new(url: impl AsRef<str>, application_name: impl AsRef<str>) -> Self {
+    /// use pyroscope::pyroscope::PyroscopeConfig;
+    /// let config = PyroscopeConfig::new("http://localhost:8080", "my-app", 100, "pyspy", "0.8.16");
+    /// ```
+    pub fn new(
+        url: impl AsRef<str>,
+        application_name: impl AsRef<str>,
+        sample_rate: u32,
+        spy_name: impl AsRef<str>,
+        spy_version: impl AsRef<str>,
+    ) -> Self {
         Self {
-            url: url.as_ref().to_owned(), // Pyroscope Server URL
-            application_name: application_name.as_ref().to_owned(), // Application Name
-            tags: HashMap::new(),         // Empty tags
-            sample_rate: 100u32,          // Default sample rate
-            spy_name: String::from("undefined"), // Spy Name should be set by the backend
-            auth_token: None,             // No authentication token
+            url: url.as_ref().to_owned(),
+            application_name: application_name.as_ref().to_owned(),
+            tags: HashMap::new(),
+            sample_rate,
+            spy_name: spy_name.as_ref().to_owned(),
+            spy_version: spy_version.as_ref().to_owned(),
             basic_auth: None,
-            func: None, // No function
-            compression: Some(GZIP),
-            report_encoding: ReportEncoding::PPROF,
+            func: None,
             tenant_id: None,
             http_headers: HashMap::new(),
         }
@@ -112,34 +107,6 @@ impl PyroscopeConfig {
     pub fn url(self, url: impl AsRef<str>) -> Self {
         Self {
             url: url.as_ref().to_owned(),
-            ..self
-        }
-    }
-
-    // Set the Application Name
-    pub fn application_name(self, application_name: impl AsRef<str>) -> Self {
-        Self {
-            application_name: application_name.as_ref().to_owned(),
-            ..self
-        }
-    }
-
-    /// Set the Sample rate.
-    pub fn sample_rate(self, sample_rate: u32) -> Self {
-        Self {
-            sample_rate,
-            ..self
-        }
-    }
-
-    /// Set the Spy Name.
-    pub fn spy_name(self, spy_name: String) -> Self {
-        Self { spy_name, ..self }
-    }
-
-    pub fn auth_token(self, auth_token: String) -> Self {
-        Self {
-            auth_token: Some(auth_token),
             ..self
         }
     }
@@ -162,10 +129,10 @@ impl PyroscopeConfig {
     /// Set the tags.
     ///
     /// # Example
-    /// ```ignore
+    /// ```
     /// use pyroscope::pyroscope::PyroscopeConfig;
-    /// let config = PyroscopeConfig::new("http://localhost:8080", "my-app")
-    ///    .tags(vec![("env", "dev")])?;
+    /// let config = PyroscopeConfig::new("http://localhost:8080", "my-app", 100, "pyroscope-rs", "0.1.0")
+    ///    .tags(vec![("env", "dev")]);
     /// ```
     pub fn tags(self, tags: Vec<(&str, &str)>) -> Self {
         // Convert &[(&str, &str)] to HashMap(String, String)
@@ -178,28 +145,6 @@ impl PyroscopeConfig {
 
         Self {
             tags: tags_hashmap,
-            ..self
-        }
-    }
-
-    /// Set the http request body compression.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use pyroscope::pyroscope::PyroscopeConfig;
-    /// let config = PyroscopeConfig::new("http://localhost:8080", "my-app")
-    ///     .compression(GZIP);
-    /// ```
-    pub fn compression(self, compression: Compression) -> Self {
-        Self {
-            compression: Some(compression),
-            ..self
-        }
-    }
-
-    pub fn report_encoding(self, report_encoding: ReportEncoding) -> Self {
-        Self {
-            report_encoding,
             ..self
         }
     }
@@ -221,14 +166,19 @@ impl PyroscopeConfig {
 
 /// PyroscopeAgent Builder
 ///
-/// Alternatively, you can use PyroscopeAgent::build() which is a short-hand
-/// for calling PyroscopeAgentBuilder::new()
-///
 /// # Example
-/// ```ignore
+/// ```no_run
 /// use pyroscope::pyroscope::PyroscopeAgentBuilder;
-/// let builder = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app");
-/// let agent = builder.build()?;
+/// use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let agent = PyroscopeAgentBuilder::new(
+///     "http://localhost:8080", "my-app", 100, "pyroscope-rs", "0.1.0",
+///     pprof_backend(PprofConfig::default(), BackendConfig::default()),
+/// )
+/// .build()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct PyroscopeAgentBuilder {
     /// Profiler backend
@@ -237,87 +187,53 @@ pub struct PyroscopeAgentBuilder {
     config: PyroscopeConfig,
 }
 
-impl Default for PyroscopeAgentBuilder {
-    fn default() -> Self {
-        Self {
-            backend: void_backend(VoidConfig::default()),
-            config: PyroscopeConfig::default(),
-        }
-    }
-}
-
 impl PyroscopeAgentBuilder {
-    /// Create a new PyroscopeAgentBuilder object. url and application_name are required.
-    /// tags and sample_rate are optional.
+    /// Create a new PyroscopeAgentBuilder object.
     ///
     /// # Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app");
+    /// ```no_run
+    /// use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    ///
+    /// let builder = PyroscopeAgentBuilder::new(
+    ///     "http://localhost:8080", "my-app", 100, "pyroscope-rs", "0.1.0",
+    ///     pprof_backend(PprofConfig::default(), BackendConfig::default()),
+    /// );
     /// ```
-    pub fn new(url: impl AsRef<str>, application_name: impl AsRef<str>) -> Self {
+    pub fn new(
+        url: impl AsRef<str>,
+        application_name: impl AsRef<str>,
+        sample_rate: u32,
+        spy_name: impl AsRef<str>,
+        spy_version: impl AsRef<str>,
+        backend: BackendImpl<BackendUninitialized>,
+    ) -> Self {
         Self {
-            backend: void_backend(VoidConfig::default()), // Default Backend
-            config: PyroscopeConfig::new(url, application_name),
+            backend,
+            config: PyroscopeConfig::new(url, application_name, sample_rate, spy_name, spy_version),
         }
     }
 
-    /// Set the Pyroscope Server URL. This can be used if the Builder was initialized with the default
-    /// trait. Default is "http://localhost:4040".
+    /// Override the Pyroscope Server URL.
     ///
     /// # Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::default()
+    /// ```no_run
+    /// use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let agent = PyroscopeAgentBuilder::new(
+    ///     "http://localhost:4040", "my-app", 100, "pyroscope-rs", "0.1.0",
+    ///     pprof_backend(PprofConfig::default(), BackendConfig::default()),
+    /// )
     /// .url("http://localhost:8080")
     /// .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn url(self, url: impl AsRef<str>) -> Self {
         Self {
             config: self.config.url(url),
-            ..self
-        }
-    }
-
-    /// Set the Application Name. This can be used if the Builder was initialized with the default
-    /// trait. Default is a randomly generated name.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::default()
-    /// .application_name("my-app")
-    /// .build()?;
-    /// ```
-    pub fn application_name(self, application_name: impl AsRef<str>) -> Self {
-        Self {
-            config: self.config.application_name(application_name),
-            ..self
-        }
-    }
-
-    /// Set the agent backend. Default is void-backend.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app")
-    /// .backend(PprofConfig::new().sample_rate(100))
-    /// .build()?;
-    /// ```
-    pub fn backend(self, backend: BackendImpl<BackendUninitialized>) -> Self {
-        Self { backend, ..self }
-    }
-
-    /// Set JWT authentication token.
-    /// This is optional. If not set, the agent will not send any authentication token.
-    ///
-    /// #Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app")
-    /// .auth_token("my-token")
-    /// .build()
-    /// ?;
-    /// ```
-    pub fn auth_token(self, auth_token: impl AsRef<str>) -> Self {
-        Self {
-            config: self.config.auth_token(auth_token.as_ref().to_owned()),
             ..self
         }
     }
@@ -333,15 +249,21 @@ impl PyroscopeAgentBuilder {
 
     /// Set the Function.
     /// This is optional. If not set, the agent will not apply any function.
-    /// #Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app")
-    /// .func(|report| {
-    ///    report
-    ///    })
-    ///    .build()
-    ///    ?;
-    ///    ```
+    /// # Example
+    /// ```no_run
+    /// use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let agent = PyroscopeAgentBuilder::new(
+    ///     "http://localhost:8080", "my-app", 100, "pyroscope-rs", "0.1.0",
+    ///     pprof_backend(PprofConfig::default(), BackendConfig::default()),
+    /// )
+    /// .func(|report| report)
+    /// .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn func(self, func: fn(Report) -> Report) -> Self {
         Self {
             config: self.config.func(func),
@@ -352,37 +274,23 @@ impl PyroscopeAgentBuilder {
     /// Set tags. Default is empty.
     ///
     /// # Example
-    /// ```ignore
-    /// let builder = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app")
+    /// ```no_run
+    /// use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let agent = PyroscopeAgentBuilder::new(
+    ///     "http://localhost:8080", "my-app", 100, "pyroscope-rs", "0.1.0",
+    ///     pprof_backend(PprofConfig::default(), BackendConfig::default()),
+    /// )
     /// .tags(vec![("env", "dev")])
     /// .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn tags(self, tags: Vec<(&str, &str)>) -> Self {
         Self {
             config: self.config.tags(tags),
-            ..self
-        }
-    }
-
-    /// Set the http request body compression.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use pyroscope::pyroscope::PyroscopeConfig;
-    /// let agent = PyroscopeAgentBuilder::new("http://localhost:8080", "my-app")
-    ///     .compression(GZIP)
-    ///     .build();
-    /// ```
-    pub fn compression(self, compression: Compression) -> Self {
-        Self {
-            config: self.config.compression(compression),
-            ..self
-        }
-    }
-
-    pub fn report_encoding(self, report_encoding: ReportEncoding) -> Self {
-        Self {
-            config: self.config.report_encoding(report_encoding),
             ..self
         }
     }
@@ -405,31 +313,12 @@ impl PyroscopeAgentBuilder {
     /// state. While you can call this method, you should call it through the
     /// `PyroscopeAgent.build()` method.
     pub fn build(self) -> Result<PyroscopeAgent<PyroscopeAgentReady>> {
-        // Set Spy Name, Spy Extension and Sample Rate from the Backend
-        let config = self.config.sample_rate(self.backend.sample_rate()?);
-        let config = config.spy_name(self.backend.spy_name()?);
-
-        // use match instead of if let to avoid the need to borrow
-        let config = match self.backend.spy_extension()? {
-            Some(extension) => {
-                if config.report_encoding == PPROF {
-                    config
-                } else {
-                    let application_name = config.application_name.clone();
-                    config.application_name(format!("{}.{}", application_name, extension))
-                }
-            }
-            None => config,
-        };
+        let config = self.config;
 
         // Set Global Tags
-        for (key, value) in config.tags.iter() {
-            self.backend
-                .add_rule(crate::backend::Rule::GlobalTag(Tag::new(
-                    key.to_owned(),
-                    value.to_owned(),
-                )))?;
-        }
+        // for (key, value) in config.tags.iter() {
+        // todo!("implement")
+        // }
 
         // Initialize the Backend
         let backend_ready = self.backend.initialize()?;
@@ -461,39 +350,6 @@ impl PyroscopeAgentBuilder {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Compression {
-    GZIP,
-}
-
-impl FromStr for Compression {
-    type Err = ();
-    fn from_str(input: &str) -> std::result::Result<Compression, Self::Err> {
-        match input {
-            "gzip" => Ok(GZIP),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum ReportEncoding {
-    FOLDED,
-    PPROF,
-}
-
-impl FromStr for ReportEncoding {
-    type Err = ();
-    fn from_str(input: &str) -> std::result::Result<ReportEncoding, Self::Err> {
-        match input {
-            "collapsed" => Ok(ReportEncoding::FOLDED),
-            "folded" => Ok(ReportEncoding::FOLDED),
-            "pprof" => Ok(ReportEncoding::PPROF),
-            _ => Err(()),
-        }
-    }
-}
-
 /// This trait is used to encode the state of the agent.
 pub trait PyroscopeAgentState {}
 
@@ -516,7 +372,6 @@ impl PyroscopeAgentState for PyroscopeAgentReady {}
 impl PyroscopeAgentState for PyroscopeAgentRunning {}
 
 /// PyroscopeAgent is the main object of the library. It is used to start and stop the profiler, schedule the timer, and send the profiler data to the server.
-#[derive(Debug)]
 pub struct PyroscopeAgent<S: PyroscopeAgentState> {
     /// Instance of the Timer
     timer: Timer,
@@ -560,7 +415,7 @@ impl<S: PyroscopeAgentState> PyroscopeAgent<S> {
         // Shutdown Backend
         match self.backend.shutdown() {
             Ok(_) => log::debug!(target: LOG_TAG, "Backend shutdown"),
-            Err(e) => log::error!(target: LOG_TAG, "Backend shutdown error: {}", e),
+            Err(e) => log::error!(target: LOG_TAG, "Backend shutdown error: {e}"),
         }
 
         // Drop Timer listeners
@@ -605,38 +460,18 @@ impl<S: PyroscopeAgentState> PyroscopeAgent<S> {
     }
 }
 
-impl PyroscopeAgent<PyroscopeAgentBare> {
-    /// Short-hand for PyroscopeAgentBuilder::new(url, application_name). This is a convenience method.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let agent = PyroscopeAgent::builder("http://localhost:8080", "my-app").build()?;
-    /// ```
-    pub fn builder<S: AsRef<str>>(url: S, application_name: S) -> PyroscopeAgentBuilder {
-        // Build PyroscopeAgent
-        PyroscopeAgentBuilder::new(url, application_name)
-    }
-
-    /// Short-hand for PyroscopeAgentBuilder::default(). This is a convenience method.
-    /// Default URL is "http://localhost:4040". Default application name is randomly generated.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let agent = PyroscopeAgent::default_builder().build()?;
-    /// ```
-    pub fn default_builder() -> PyroscopeAgentBuilder {
-        // Build PyroscopeAgent
-        PyroscopeAgentBuilder::default()
-    }
-}
-
 impl PyroscopeAgent<PyroscopeAgentReady> {
     /// Start profiling and sending data. The agent will keep running until stopped. The agent will send data to the server every 10s seconds.
     ///
     /// # Example
-    /// ```ignore
-    /// let agent = PyroscopeAgent::builder("http://localhost:8080", "my-app").build()?;
+    /// ```no_run
+    /// # use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// # use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let agent = PyroscopeAgentBuilder::new("http://localhost:4040", "my-app", 100, "pyroscope-rs", "0.1.0", pprof_backend(PprofConfig::default(), BackendConfig::default())).build()?;
     /// let agent_running = agent.start()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn start(mut self) -> Result<PyroscopeAgent<PyroscopeAgentRunning>> {
         log::debug!(target: LOG_TAG, "Starting");
@@ -668,7 +503,7 @@ impl PyroscopeAgent<PyroscopeAgentReady> {
             while let Ok(signal) = rx.recv() {
                 match signal {
                     TimerSignal::NextSnapshot(until) => {
-                        log::trace!(target: LOG_TAG, "Sending session {}", until);
+                        log::trace!(target: LOG_TAG, "Sending session {until}");
 
                         // Generate report from backend
                         let report = backend
@@ -682,11 +517,11 @@ impl PyroscopeAgent<PyroscopeAgentReady> {
                             .report()?;
 
                         // Send new Session to SessionManager
-                        stx.send(SessionSignal::Session(Session::new(
+                        stx.send(SessionSignal::Session(Box::new(Session::new(
                             until,
                             config.clone(),
                             report,
-                        )?))?
+                        )?)))?
                     }
                     TimerSignal::Terminate => {
                         log::trace!(target: LOG_TAG, "Session Killed");
@@ -713,11 +548,15 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
     /// Stop the agent. The agent will stop profiling and send a last report to the server.
     ///
     /// # Example
-    /// ```ignore
-    /// let agent = PyroscopeAgent::builder("http://localhost:8080", "my-app").build()?;
-    /// let agent_running = agent.start()?;
-    /// // Expensive operation
-    /// let agent_ready = agent_running.stop();
+    /// ```no_run
+    /// # use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// # use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let agent = PyroscopeAgentBuilder::new("http://localhost:4040", "my-app", 100, "pyroscope-rs", "0.1.0", pprof_backend(PprofConfig::default(), BackendConfig::default())).build()?;
+    /// # let agent_running = agent.start()?;
+    /// let agent_ready = agent_running.stop()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn stop(mut self) -> Result<PyroscopeAgent<PyroscopeAgentReady>> {
         log::debug!(target: LOG_TAG, "Stopping");
@@ -743,10 +582,15 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
     /// thread boundaries. This function can be called multiple times.
     ///
     /// # Example
-    /// ```ignore
-    /// let agent = PyroscopeAgent::builder("http://localhost:8080", "my-app").build()?;
-    /// let agent_running = agent.start()?;
+    /// ```no_run
+    /// # use pyroscope::pyroscope::PyroscopeAgentBuilder;
+    /// # use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let agent = PyroscopeAgentBuilder::new("http://localhost:4040", "my-app", 100, "pyroscope-rs", "0.1.0", pprof_backend(PprofConfig::default(), BackendConfig::default())).build()?;
+    /// # let agent_running = agent.start()?;
     /// let (add_tag, remove_tag) = agent_running.tag_wrapper();
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// The functions can be later called from any thread.
@@ -757,6 +601,7 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
     /// // some computation
     /// remove_tag("key".to_string(), "value".to_string());
     /// ```
+    #[allow(clippy::type_complexity)]
     pub fn tag_wrapper(
         &self,
     ) -> (
@@ -768,8 +613,9 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
 
         (
             move |key, value| {
-                let thread_id = crate::utils::pthread_self()?;
-                let rule = Rule::ThreadTag(thread_id, Tag::new(key, value));
+                // https://github.com/tikv/pprof-rs/blob/01cff82dbe6fe110a707bf2b38d8ebb1d14a18f8/src/profiler.rs#L405
+                let thread_id = crate::utils::ThreadId::pthread_self();
+                let rule = ThreadTag::new(thread_id, Tag::new(key, value));
                 let backend = backend_add.lock()?;
                 backend
                     .as_ref()
@@ -778,13 +624,14 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
                             "PyroscopeAgent - Failed to unwrap backend".to_string(),
                         )
                     })?
-                    .add_rule(rule)?;
+                    .add_tag(rule)?;
 
                 Ok(())
             },
             move |key, value| {
-                let thread_id = crate::utils::pthread_self()?;
-                let rule = Rule::ThreadTag(thread_id, Tag::new(key, value));
+                // https://github.com/tikv/pprof-rs/blob/01cff82dbe6fe110a707bf2b38d8ebb1d14a18f8/src/profiler.rs#L405
+                let thread_id = crate::utils::ThreadId::pthread_self();
+                let rule = ThreadTag::new(thread_id, Tag::new(key, value));
                 let backend = backend_remove.lock()?;
                 backend
                     .as_ref()
@@ -793,45 +640,27 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
                             "PyroscopeAgent - Failed to unwrap backend".to_string(),
                         )
                     })?
-                    .remove_rule(rule)?;
+                    .remove_tag(rule)?;
 
                 Ok(())
             },
         )
     }
 
-    /// Add a global Tag rule to the backend Ruleset. For tagging, it's
-    /// recommended to use the `tag_wrapper` function.
-    pub fn add_global_tag(&self, tag: Tag) -> Result<()> {
-        let rule = Rule::GlobalTag(tag);
-        self.backend.add_rule(rule)?;
-
-        Ok(())
-    }
-
-    /// Remove a global Tag rule from the backend Ruleset. For tagging, it's
-    /// recommended to use the `tag_wrapper` function.
-    pub fn remove_global_tag(&self, tag: Tag) -> Result<()> {
-        let rule = Rule::GlobalTag(tag);
-        self.backend.remove_rule(rule)?;
-
-        Ok(())
-    }
-
     /// Add a thread Tag rule to the backend Ruleset. For tagging, it's
     /// recommended to use the `tag_wrapper` function.
-    pub fn add_thread_tag(&self, thread_id: u64, tag: Tag) -> Result<()> {
-        let rule = Rule::ThreadTag(thread_id, tag);
-        self.backend.add_rule(rule)?;
+    pub fn add_thread_tag(&self, thread_id: crate::utils::ThreadId, tag: Tag) -> Result<()> {
+        let rule = ThreadTag::new(thread_id, tag);
+        self.backend.add_tag(rule)?;
 
         Ok(())
     }
 
     /// Remove a thread Tag rule from the backend Ruleset. For tagging, it's
     /// recommended to use the `tag_wrapper` function.
-    pub fn remove_thread_tag(&self, thread_id: u64, tag: Tag) -> Result<()> {
-        let rule = Rule::ThreadTag(thread_id, tag);
-        self.backend.remove_rule(rule)?;
+    pub fn remove_thread_tag(&self, thread_id: crate::utils::ThreadId, tag: Tag) -> Result<()> {
+        let rule = ThreadTag::new(thread_id, tag);
+        self.backend.remove_tag(rule)?;
 
         Ok(())
     }
@@ -840,16 +669,15 @@ impl PyroscopeAgent<PyroscopeAgentRunning> {
 pub fn parse_http_headers_json(http_headers_json: String) -> Result<HashMap<String, String>> {
     let mut http_headers = HashMap::new();
     let parsed: serde_json::Value = serde_json::from_str(&http_headers_json)?;
-    let parsed = parsed.as_object().ok_or_else(||
-        PyroscopeError::AdHoc(format!("expected object, got {}", parsed))
-    )?;
+    let parsed = parsed
+        .as_object()
+        .ok_or_else(|| PyroscopeError::AdHoc(format!("expected object, got {parsed}")))?;
     for (k, v) in parsed {
         if let Some(value) = v.as_str() {
             http_headers.insert(k.to_string(), value.to_string());
         } else {
             return Err(PyroscopeError::AdHoc(format!(
-                "invalid http header value, not a string: {}",
-                v
+                "invalid http header value, not a string: {v}"
             )));
         }
     }
@@ -858,17 +686,16 @@ pub fn parse_http_headers_json(http_headers_json: String) -> Result<HashMap<Stri
 
 pub fn parse_vec_string_json(s: String) -> Result<Vec<String>> {
     let parsed: serde_json::Value = serde_json::from_str(&s)?;
-    let parsed = parsed.as_array().ok_or_else(||
-        PyroscopeError::AdHoc(format!("expected array, got {}", parsed))
-    )?;
+    let parsed = parsed
+        .as_array()
+        .ok_or_else(|| PyroscopeError::AdHoc(format!("expected array, got {parsed}")))?;
     let mut res = Vec::with_capacity(parsed.len());
     for v in parsed {
         if let Some(s) = v.as_str() {
             res.push(s.to_string());
         } else {
             return Err(PyroscopeError::AdHoc(format!(
-                "invalid element value, not a string: {}",
-                v
+                "invalid element value, not a string: {v}"
             )));
         }
     }

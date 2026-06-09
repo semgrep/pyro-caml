@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.71"
 name = "tokio"
-version = "1.48.0"
+version = "1.52.3"
 authors = ["Tokio Contributors <team@tokio.rs>"]
 build = false
 autolib = false
@@ -225,12 +225,36 @@ name = "fs_uring"
 path = "tests/fs_uring.rs"
 
 [[test]]
+name = "fs_uring_cancel_open"
+path = "tests/fs_uring_cancel_open.rs"
+
+[[test]]
+name = "fs_uring_completed_then_dropped_before_repoll"
+path = "tests/fs_uring_completed_then_dropped_before_repoll.rs"
+
+[[test]]
+name = "fs_uring_file_read"
+path = "tests/fs_uring_file_read.rs"
+
+[[test]]
+name = "fs_uring_read"
+path = "tests/fs_uring_read.rs"
+
+[[test]]
+name = "fs_uring_runtime_shutdown"
+path = "tests/fs_uring_runtime_shutdown.rs"
+
+[[test]]
 name = "fs_write"
 path = "tests/fs_write.rs"
 
 [[test]]
 name = "io_async_fd"
 path = "tests/io_async_fd.rs"
+
+[[test]]
+name = "io_async_fd_memory_leak"
+path = "tests/io_async_fd_memory_leak.rs"
 
 [[test]]
 name = "io_async_read"
@@ -457,6 +481,10 @@ name = "rt_common"
 path = "tests/rt_common.rs"
 
 [[test]]
+name = "rt_common_before_park"
+path = "tests/rt_common_before_park.rs"
+
+[[test]]
 name = "rt_handle"
 path = "tests/rt_handle.rs"
 
@@ -481,6 +509,14 @@ name = "rt_poll_callbacks"
 path = "tests/rt_poll_callbacks.rs"
 
 [[test]]
+name = "rt_shutdown_err"
+path = "tests/rt_shutdown_err.rs"
+
+[[test]]
+name = "rt_spawn_blocking"
+path = "tests/rt_spawn_blocking.rs"
+
+[[test]]
 name = "rt_threaded"
 path = "tests/rt_threaded.rs"
 
@@ -489,8 +525,16 @@ name = "rt_time_start_paused"
 path = "tests/rt_time_start_paused.rs"
 
 [[test]]
+name = "rt_unstable_eager_driver_handoff"
+path = "tests/rt_unstable_eager_driver_handoff.rs"
+
+[[test]]
 name = "rt_unstable_metrics"
 path = "tests/rt_unstable_metrics.rs"
+
+[[test]]
+name = "rt_worker_index"
+path = "tests/rt_worker_index.rs"
 
 [[test]]
 name = "signal_ctrl_c"
@@ -701,6 +745,10 @@ name = "test_clock"
 path = "tests/test_clock.rs"
 
 [[test]]
+name = "time_alt"
+path = "tests/time_alt.rs"
+
+[[test]]
 name = "time_interval"
 path = "tests/time_interval.rs"
 
@@ -773,7 +821,7 @@ version = "1.2.1"
 optional = true
 
 [dependencies.mio]
-version = "1.0.1"
+version = "1.2.0"
 optional = true
 default-features = false
 
@@ -785,7 +833,7 @@ optional = true
 version = "0.2.11"
 
 [dependencies.tokio-macros]
-version = "~2.6.0"
+version = "~2.7.0"
 optional = true
 
 [dev-dependencies.async-stream]
@@ -797,6 +845,9 @@ features = ["async-await"]
 
 [dev-dependencies.futures-concurrency]
 version = "7.6.3"
+
+[dev-dependencies.futures-test]
+version = "0.3.31"
 
 [dev-dependencies.mockall]
 version = "0.13.0"
@@ -822,7 +873,7 @@ version = "0.3.58"
 optional = true
 
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.io-uring]
-version = "0.7.6"
+version = "0.7.11"
 optional = true
 default-features = false
 
@@ -831,7 +882,7 @@ version = "0.2.168"
 optional = true
 
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.mio]
-version = "1.0.1"
+version = "1.2.0"
 features = [
     "os-poll",
     "os-ext",
@@ -841,6 +892,14 @@ default-features = false
 
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.slab]
 version = "0.4.9"
+optional = true
+
+[target.'cfg(all(tokio_unstable, target_os = "linux"))'.dev-dependencies.backtrace]
+version = "0.3.58"
+
+[target.'cfg(any(not(target_family = "wasm"), all(target_os = "wasi", not(target_env = "p1"))))'.dependencies.socket2]
+version = "0.6.3"
+features = ["all"]
 optional = true
 
 [target."cfg(loom)".dev-dependencies.loom]
@@ -853,11 +912,6 @@ features = [
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies.rand]
 version = "0.9"
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies.socket2]
-version = "0.6.0"
-features = ["all"]
-optional = true
-
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies.proptest]
 version = "1"
 
@@ -868,8 +922,12 @@ version = "0.6.0"
 version = "3.1.0"
 
 [target.'cfg(target_os = "freebsd")'.dev-dependencies.mio-aio]
-version = "1"
+version = "2"
 features = ["tokio"]
+
+[target.'cfg(target_os = "wasi")'.dependencies.libc]
+version = "0.2.168"
+optional = true
 
 [target."cfg(tokio_unstable)".dependencies.tracing]
 version = "0.1.29"
@@ -889,7 +947,7 @@ optional = true
 version = "0.2.168"
 
 [target."cfg(unix)".dev-dependencies.nix]
-version = "0.29.0"
+version = "0.31.0"
 features = [
     "aio",
     "fs",

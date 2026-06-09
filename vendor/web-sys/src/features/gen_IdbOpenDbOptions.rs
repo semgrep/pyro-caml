@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = IDBOpenDBOptions)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "IDBOpenDBOptions")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `IdbOpenDbOptions` dictionary."]
     #[doc = ""]
@@ -37,6 +37,18 @@ extern "C" {
     #[deprecated]
     #[wasm_bindgen(method, setter = "version")]
     pub fn set_version(this: &IdbOpenDbOptions, val: f64);
+    #[doc = "Change the `version` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `IdbOpenDbOptions`*"]
+    #[deprecated]
+    #[wasm_bindgen(method, setter = "version")]
+    pub fn set_version_u32(this: &IdbOpenDbOptions, val: u32);
+    #[doc = "Change the `version` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `IdbOpenDbOptions`*"]
+    #[deprecated]
+    #[wasm_bindgen(method, setter = "version")]
+    pub fn set_version_f64(this: &IdbOpenDbOptions, val: f64);
 }
 impl IdbOpenDbOptions {
     #[doc = "Construct a new `IdbOpenDbOptions`."]

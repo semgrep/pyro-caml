@@ -2,28 +2,29 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![cfg_attr(no_std, feature = "no_std")]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 pub use finish::Finish;
-
-#[cfg(feature = "no_std")]
 extern crate alloc;
 
-#[cfg(not(feature = "no_std"))]
-macro_rules! invalid_data_error {
-    ($fmt:expr) => { invalid_data_error!("{}", $fmt) };
-    ($fmt:expr, $($arg:tt)*) => {
-        ::std::io::Error::new(::std::io::ErrorKind::InvalidData, format!($fmt, $($arg)*))
-    }
-}
-
-#[cfg(feature = "no_std")]
 macro_rules! invalid_data_error {
     ($fmt:expr) => {
-        invalid_data_error!($fmt, "")
+        ::no_std_io2::io::Error::new(::no_std_io2::io::ErrorKind::InvalidData, $fmt)
     };
     ($fmt:expr, $($arg:tt)*) => {
-        ::core2::io::Error::new(::core2::io::ErrorKind::InvalidData, $fmt)
+        {
+            #[cfg(feature = "std")]
+            {
+                ::no_std_io2::io::Error::new(
+                    ::no_std_io2::io::ErrorKind::InvalidData,
+                    ::alloc::format!($fmt, $($arg)*),
+                )
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                ::no_std_io2::io::Error::new(::no_std_io2::io::ErrorKind::InvalidData, $fmt)
+            }
+        }
     };
 }
 

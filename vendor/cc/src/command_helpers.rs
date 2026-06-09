@@ -9,14 +9,14 @@ use std::{
     hash::Hasher,
     io::{self, Read, Write},
     path::Path,
-    process::{Child, ChildStderr, Command, Stdio},
+    process::{Child, ChildStderr, Command, Output, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
 };
 
-use crate::{Error, ErrorKind, Object};
+use crate::{utilities::cargo_env_var_os, Error, ErrorKind, Object};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CargoOutput {
@@ -34,7 +34,7 @@ pub(crate) enum OutputKind {
     Forward,
     /// Discard the output ([`Stdio::null()`])
     Discard,
-    /// Capture the result (`[Stdio::piped()`])
+    /// Capture the result ([`Stdio::piped()`])
     Capture,
 }
 
@@ -308,11 +308,7 @@ pub(crate) fn objects_from_files(files: &[Arc<Path>], dst: &Path) -> Result<Vec<
 
         // Make the dirname relative (if possible) to avoid full system paths influencing the sha
         // and making the output system-dependent
-        //
-        // NOTE: Here we allow using std::env::var (instead of Build::getenv) because
-        // CARGO_* variables always trigger a rebuild when changed
-        #[allow(clippy::disallowed_methods)]
-        let dirname = if let Some(root) = std::env::var_os("CARGO_MANIFEST_DIR") {
+        let dirname = if let Some(root) = cargo_env_var_os("CARGO_MANIFEST_DIR") {
             let root = root.to_string_lossy();
             Cow::Borrowed(dirname.strip_prefix(&*root).unwrap_or(&dirname))
         } else {
@@ -323,6 +319,7 @@ pub(crate) fn objects_from_files(files: &[Arc<Path>], dst: &Path) -> Result<Vec<
         if let Some(extension) = file.extension() {
             hasher.write(extension.to_string_lossy().as_bytes());
         }
+
         let obj = dst
             .join(format!("{:016x}-{}", hasher.finish(), basename))
             .with_extension("o");
@@ -348,24 +345,79 @@ pub(crate) fn run(cmd: &mut Command, cargo_output: &CargoOutput) -> Result<(), E
     wait_on_child(cmd, &mut child, cargo_output)
 }
 
-pub(crate) fn run_output(cmd: &mut Command, cargo_output: &CargoOutput) -> Result<Vec<u8>, Error> {
+/// Like [`run`], but stderr is only forwarded as `cargo:warning=` when the
+/// command succeeds. On failure, stderr is silently discarded.
+///
+/// Useful for probe commands where failure is expected and the error
+/// message is not actionable.
+pub(crate) fn run_silent_on_error(
+    cmd: &mut Command,
+    cargo_output: &CargoOutput,
+) -> Result<(), Error> {
+    let Output {
+        status,
+        stdout: _,
+        stderr,
+    } = spawn_and_wait_for_output(cmd, cargo_output)?;
+
+    cargo_output.print_debug(&status);
+
+    if status.success() {
+        if cargo_output.warnings {
+            stderr
+                .split(|&b| b == b'\n')
+                .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+                .filter(|line| !line.is_empty())
+                .for_each(write_warning);
+        }
+        Ok(())
+    } else {
+        Err(Error::new(
+            ErrorKind::ToolExecError,
+            format!("command did not execute successfully (status code {status}): {cmd:?}"),
+        ))
+    }
+}
+
+pub(crate) fn spawn_and_wait_for_output(
+    cmd: &mut Command,
+    cargo_output: &CargoOutput,
+) -> Result<Output, Error> {
     // We specifically need the output to be captured, so override default
     let mut captured_cargo_output = cargo_output.clone();
     captured_cargo_output.output = OutputKind::Capture;
-    let mut child = spawn(cmd, &captured_cargo_output)?;
+    spawn(cmd, &captured_cargo_output)?
+        .wait_with_output()
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::ToolExecError,
+                format!("failed to wait on spawned child process `{cmd:?}`: {e}"),
+            )
+        })
+}
 
-    let mut stdout = vec![];
-    child
-        .stdout
-        .take()
-        .unwrap()
-        .read_to_end(&mut stdout)
-        .unwrap();
+pub(crate) fn run_output(cmd: &mut Command, cargo_output: &CargoOutput) -> Result<Vec<u8>, Error> {
+    let Output {
+        status,
+        stdout,
+        stderr,
+    } = spawn_and_wait_for_output(cmd, cargo_output)?;
 
-    // Don't care about this output, use the normal settings
-    wait_on_child(cmd, &mut child, cargo_output)?;
+    stderr
+        .split(|&b| b == b'\n')
+        .filter(|part| !part.is_empty())
+        .for_each(write_warning);
 
-    Ok(stdout)
+    cargo_output.print_debug(&status);
+
+    if status.success() {
+        Ok(stdout)
+    } else {
+        Err(Error::new(
+            ErrorKind::ToolExecError,
+            format!("command did not execute successfully (status code {status}): {cmd:?}"),
+        ))
+    }
 }
 
 pub(crate) fn spawn(cmd: &mut Command, cargo_output: &CargoOutput) -> Result<Child, Error> {

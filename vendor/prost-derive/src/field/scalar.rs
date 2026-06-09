@@ -1,12 +1,9 @@
-use std::convert::TryFrom;
 use std::fmt;
 
 use anyhow::{anyhow, bail, Error};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
-use syn::{
-    parse_str, Ident, Index, Lit, LitByteStr, Meta, MetaList, MetaNameValue, NestedMeta, Path,
-};
+use syn::{parse_str, Expr, ExprLit, Ident, Index, Lit, LitByteStr, Meta, MetaNameValue, Path};
 
 use crate::field::{bool_attr, set_option, tag_attr, Label};
 
@@ -49,10 +46,11 @@ impl Field {
             None => return Ok(None),
         };
 
-        match unknown_attrs.len() {
-            0 => (),
-            1 => bail!("unknown attribute: {:?}", unknown_attrs[0]),
-            _ => bail!("unknown attributes: {:?}", unknown_attrs),
+        if !unknown_attrs.is_empty() {
+            bail!(
+                "unknown attribute(s): #[prost({})]",
+                quote!(#(#unknown_attrs),*)
+            );
         }
 
         let tag = match tag.or(inferred_tag) {
@@ -107,14 +105,14 @@ impl Field {
         }
     }
 
-    pub fn encode(&self, ident: TokenStream) -> TokenStream {
+    pub fn encode(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         let module = self.ty.module();
         let encode_fn = match self.kind {
             Kind::Plain(..) | Kind::Optional(..) | Kind::Required(..) => quote!(encode),
             Kind::Repeated => quote!(encode_repeated),
             Kind::Packed => quote!(encode_packed),
         };
-        let encode_fn = quote!(::prost::encoding::#module::#encode_fn);
+        let encode_fn = quote!(#prost_path::encoding::#module::#encode_fn);
         let tag = self.tag;
 
         match self.kind {
@@ -139,13 +137,13 @@ impl Field {
 
     /// Returns an expression which evaluates to the result of merging a decoded
     /// scalar value into the field.
-    pub fn merge(&self, ident: TokenStream) -> TokenStream {
+    pub fn merge(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         let module = self.ty.module();
         let merge_fn = match self.kind {
             Kind::Plain(..) | Kind::Optional(..) | Kind::Required(..) => quote!(merge),
             Kind::Repeated | Kind::Packed => quote!(merge_repeated),
         };
-        let merge_fn = quote!(::prost::encoding::#module::#merge_fn);
+        let merge_fn = quote!(#prost_path::encoding::#module::#merge_fn);
 
         match self.kind {
             Kind::Plain(..) | Kind::Required(..) | Kind::Repeated | Kind::Packed => quote! {
@@ -161,14 +159,14 @@ impl Field {
     }
 
     /// Returns an expression which evaluates to the encoded length of the field.
-    pub fn encoded_len(&self, ident: TokenStream) -> TokenStream {
+    pub fn encoded_len(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         let module = self.ty.module();
         let encoded_len_fn = match self.kind {
             Kind::Plain(..) | Kind::Optional(..) | Kind::Required(..) => quote!(encoded_len),
             Kind::Repeated => quote!(encoded_len_repeated),
             Kind::Packed => quote!(encoded_len_packed),
         };
-        let encoded_len_fn = quote!(::prost::encoding::#module::#encoded_len_fn);
+        let encoded_len_fn = quote!(#prost_path::encoding::#module::#encoded_len_fn);
         let tag = self.tag;
 
         match self.kind {
@@ -206,11 +204,11 @@ impl Field {
     }
 
     /// Returns an expression which evaluates to the default value of the field.
-    pub fn default(&self) -> TokenStream {
+    pub fn default(&self, prost_path: &Path) -> TokenStream {
         match self.kind {
-            Kind::Plain(ref value) | Kind::Required(ref value) => value.owned(),
+            Kind::Plain(ref value) | Kind::Required(ref value) => value.owned(prost_path),
             Kind::Optional(_) => quote!(::core::option::Option::None),
-            Kind::Repeated | Kind::Packed => quote!(::prost::alloc::vec::Vec::new()),
+            Kind::Repeated | Kind::Packed => quote!(#prost_path::alloc::vec::Vec::new()),
         }
     }
 
@@ -221,24 +219,26 @@ impl Field {
                 struct #wrap_name<'a>(&'a i32);
                 impl<'a> ::core::fmt::Debug for #wrap_name<'a> {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
-                        match #ty::from_i32(*self.0) {
-                            None => ::core::fmt::Debug::fmt(&self.0, f),
-                            Some(en) => ::core::fmt::Debug::fmt(&en, f),
+                        let res: ::core::result::Result<#ty, _> = ::core::convert::TryFrom::try_from(*self.0);
+                        match res {
+                            Err(_) => ::core::fmt::Debug::fmt(&self.0, f),
+                            Ok(en) => ::core::fmt::Debug::fmt(&en, f),
                         }
                     }
                 }
             }
         } else {
             quote! {
+                #[allow(non_snake_case)]
                 fn #wrap_name<T>(v: T) -> T { v }
             }
         }
     }
 
     /// Returns a fragment for formatting the field `ident` in `Debug`.
-    pub fn debug(&self, wrapper_name: TokenStream) -> TokenStream {
+    pub fn debug(&self, prost_path: &Path, wrapper_name: TokenStream) -> TokenStream {
         let wrapper = self.debug_inner(quote!(Inner));
-        let inner_ty = self.ty.rust_type();
+        let inner_ty = self.ty.rust_type(prost_path);
         match self.kind {
             Kind::Plain(_) | Kind::Required(_) => self.debug_inner(wrapper_name),
             Kind::Optional(_) => quote! {
@@ -252,7 +252,7 @@ impl Field {
             },
             Kind::Repeated | Kind::Packed => {
                 quote! {
-                    struct #wrapper_name<'a>(&'a ::prost::alloc::vec::Vec<#inner_ty>);
+                    struct #wrapper_name<'a>(&'a #prost_path::alloc::vec::Vec<#inner_ty>);
                     impl<'a> ::core::fmt::Debug for #wrapper_name<'a> {
                         fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
                             let mut vec_builder = f.debug_list();
@@ -272,7 +272,7 @@ impl Field {
     pub fn methods(&self, ident: &TokenStream) -> Option<TokenStream> {
         let mut ident_str = ident.to_string();
         if ident_str.starts_with("r#") {
-            ident_str = ident_str[2..].to_owned();
+            ident_str = ident_str.split_off(2);
         }
 
         // Prepend `get_` for getter methods of tuple structs.
@@ -285,19 +285,18 @@ impl Field {
         };
 
         if let Ty::Enumeration(ref ty) = self.ty {
-            let set = Ident::new(&format!("set_{}", ident_str), Span::call_site());
-            let set_doc = format!("Sets `{}` to the provided enum value.", ident_str);
+            let set = Ident::new(&format!("set_{ident_str}"), Span::call_site());
+            let set_doc = format!("Sets `{ident_str}` to the provided enum value.");
             Some(match self.kind {
                 Kind::Plain(ref default) | Kind::Required(ref default) => {
                     let get_doc = format!(
-                        "Returns the enum value of `{}`, \
-                         or the default if the field is set to an invalid enum value.",
-                        ident_str,
+                        "Returns the enum value of `{ident_str}`, \
+                         or the default if the field is set to an invalid enum value."
                     );
                     quote! {
                         #[doc=#get_doc]
                         pub fn #get(&self) -> #ty {
-                            #ty::from_i32(self.#ident).unwrap_or(#default)
+                            ::core::convert::TryFrom::try_from(self.#ident).unwrap_or(#default)
                         }
 
                         #[doc=#set_doc]
@@ -308,14 +307,16 @@ impl Field {
                 }
                 Kind::Optional(ref default) => {
                     let get_doc = format!(
-                        "Returns the enum value of `{}`, \
-                         or the default if the field is unset or set to an invalid enum value.",
-                        ident_str,
+                        "Returns the enum value of `{ident_str}`, \
+                         or the default if the field is unset or set to an invalid enum value."
                     );
                     quote! {
                         #[doc=#get_doc]
                         pub fn #get(&self) -> #ty {
-                            self.#ident.and_then(#ty::from_i32).unwrap_or(#default)
+                            self.#ident.and_then(|x| {
+                                let result: ::core::result::Result<#ty, _> = ::core::convert::TryFrom::try_from(x);
+                                result.ok()
+                            }).unwrap_or(#default)
                         }
 
                         #[doc=#set_doc]
@@ -326,18 +327,20 @@ impl Field {
                 }
                 Kind::Repeated | Kind::Packed => {
                     let iter_doc = format!(
-                        "Returns an iterator which yields the valid enum values contained in `{}`.",
-                        ident_str,
+                        "Returns an iterator which yields the valid enum values contained in `{ident_str}`."
                     );
-                    let push = Ident::new(&format!("push_{}", ident_str), Span::call_site());
-                    let push_doc = format!("Appends the provided enum value to `{}`.", ident_str);
+                    let push = Ident::new(&format!("push_{ident_str}"), Span::call_site());
+                    let push_doc = format!("Appends the provided enum value to `{ident_str}`.");
                     quote! {
                         #[doc=#iter_doc]
                         pub fn #get(&self) -> ::core::iter::FilterMap<
                             ::core::iter::Cloned<::core::slice::Iter<i32>>,
                             fn(i32) -> ::core::option::Option<#ty>,
                         > {
-                            self.#ident.iter().cloned().filter_map(#ty::from_i32)
+                            self.#ident.iter().cloned().filter_map(|x| {
+                                let result: ::core::result::Result<#ty, _> = ::core::convert::TryFrom::try_from(x);
+                                result.ok()
+                            })
                         }
                         #[doc=#push_doc]
                         pub fn #push(&mut self, value: #ty) {
@@ -356,8 +359,7 @@ impl Field {
             };
 
             let get_doc = format!(
-                "Returns the value of `{0}`, or the default value if `{0}` is unset.",
-                ident_str,
+                "Returns the value of `{ident_str}`, or the default value if `{ident_str}` is unset."
             );
 
             Some(quote! {
@@ -407,14 +409,14 @@ impl BytesTy {
         match s {
             "vec" => Ok(BytesTy::Vec),
             "bytes" => Ok(BytesTy::Bytes),
-            _ => bail!("Invalid bytes type: {}", s),
+            _ => bail!("Invalid bytes type: {s}"),
         }
     }
 
-    fn rust_type(&self) -> TokenStream {
+    fn rust_type(&self, prost_path: &Path) -> TokenStream {
         match self {
-            BytesTy::Vec => quote! { ::prost::alloc::vec::Vec<u8> },
-            BytesTy::Bytes => quote! { ::prost::bytes::Bytes },
+            BytesTy::Vec => quote! { #prost_path::alloc::vec::Vec<u8> },
+            BytesTy::Bytes => quote! { #prost_path::bytes::Bytes },
         }
     }
 }
@@ -439,29 +441,24 @@ impl Ty {
             Meta::Path(ref name) if name.is_ident("bytes") => Ty::Bytes(BytesTy::Vec),
             Meta::NameValue(MetaNameValue {
                 ref path,
-                lit: Lit::Str(ref l),
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(ref l),
+                        ..
+                    }),
                 ..
             }) if path.is_ident("bytes") => Ty::Bytes(BytesTy::try_from_str(&l.value())?),
             Meta::NameValue(MetaNameValue {
                 ref path,
-                lit: Lit::Str(ref l),
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(ref l),
+                        ..
+                    }),
                 ..
             }) if path.is_ident("enumeration") => Ty::Enumeration(parse_str::<Path>(&l.value())?),
-            Meta::List(MetaList {
-                ref path,
-                ref nested,
-                ..
-            }) if path.is_ident("enumeration") => {
-                // TODO(rustlang/rust#23121): slice pattern matching would make this much nicer.
-                if nested.len() == 1 {
-                    if let NestedMeta::Meta(Meta::Path(ref path)) = nested[0] {
-                        Ty::Enumeration(path.clone())
-                    } else {
-                        bail!("invalid enumeration attribute: item must be an identifier");
-                    }
-                } else {
-                    bail!("invalid enumeration attribute: only a single identifier is supported");
-                }
+            Meta::List(ref meta_list) if meta_list.path.is_ident("enumeration") => {
+                Ty::Enumeration(meta_list.parse_args::<Path>()?)
             }
             _ => return Ok(None),
         };
@@ -470,7 +467,7 @@ impl Ty {
 
     pub fn from_str(s: &str) -> Result<Ty, Error> {
         let enumeration_len = "enumeration".len();
-        let error = Err(anyhow!("invalid type: {}", s));
+        let error = Err(anyhow!("invalid type: {s}"));
         let ty = match s.trim() {
             "float" => Ty::Float,
             "double" => Ty::Double,
@@ -528,10 +525,10 @@ impl Ty {
     }
 
     // TODO: rename to 'owned_type'.
-    pub fn rust_type(&self) -> TokenStream {
+    pub fn rust_type(&self, prost_path: &Path) -> TokenStream {
         match self {
-            Ty::String => quote!(::prost::alloc::string::String),
-            Ty::Bytes(ty) => ty.rust_type(),
+            Ty::String => quote!(#prost_path::alloc::string::String),
+            Ty::Bytes(ty) => ty.rust_type(prost_path),
             _ => self.rust_ref_type(),
         }
     }
@@ -618,10 +615,14 @@ impl DefaultValue {
     pub fn from_attr(attr: &Meta) -> Result<Option<Lit>, Error> {
         if !attr.path().is_ident("default") {
             Ok(None)
-        } else if let Meta::NameValue(ref name_value) = *attr {
-            Ok(Some(name_value.lit.clone()))
+        } else if let Meta::NameValue(MetaNameValue {
+            value: Expr::Lit(ExprLit { ref lit, .. }),
+            ..
+        }) = *attr
+        {
+            Ok(Some(lit.clone()))
         } else {
-            bail!("invalid default value attribute: {:?}", attr)
+            bail!("invalid default value attribute: {attr:?}")
         }
     }
 
@@ -671,7 +672,7 @@ impl DefaultValue {
                 let value = value.trim();
 
                 if let Ty::Enumeration(ref path) = *ty {
-                    let variant = Ident::new(value, Span::call_site());
+                    let variant = parse_str::<Ident>(value)?;
                     return Ok(DefaultValue::Enumeration(quote!(#path::#variant)));
                 }
 
@@ -774,10 +775,10 @@ impl DefaultValue {
         }
     }
 
-    pub fn owned(&self) -> TokenStream {
+    pub fn owned(&self, prost_path: &Path) -> TokenStream {
         match *self {
             DefaultValue::String(ref value) if value.is_empty() => {
-                quote!(::prost::alloc::string::String::new())
+                quote!(#prost_path::alloc::string::String::new())
             }
             DefaultValue::String(ref value) => quote!(#value.into()),
             DefaultValue::Bytes(ref value) if value.is_empty() => {
@@ -819,5 +820,18 @@ impl ToTokens for DefaultValue {
             DefaultValue::Enumeration(ref value) => value.to_tokens(tokens),
             DefaultValue::Path(ref value) => value.to_tokens(tokens),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DefaultValue, Ty};
+    use syn::{parse_str, Lit, Path};
+
+    #[test]
+    fn from_lit_rejects_invalid_enumeration_default_without_panic() {
+        let ty = Ty::Enumeration(parse_str::<Path>("ExampleEnum").unwrap());
+        let lit = parse_str::<Lit>("\"not-valid!\"").unwrap();
+        assert!(DefaultValue::from_lit(&ty, lit).is_err());
     }
 }

@@ -2,11 +2,11 @@ use crate::prelude::*;
 
 pub type wchar_t = i32;
 
-pub type blkcnt_t = c_ulong;
+pub type blkcnt_t = c_longlong;
 pub type blksize_t = c_long;
 pub type clock_t = c_long;
 pub type clockid_t = c_int;
-pub type dev_t = c_long;
+pub type dev_t = c_ulonglong;
 pub type fsblkcnt_t = c_ulong;
 pub type fsfilcnt_t = c_ulong;
 pub type ino_t = c_ulonglong;
@@ -28,20 +28,14 @@ pub type suseconds_t = c_int;
 pub type tcflag_t = u32;
 pub type time_t = c_longlong;
 pub type id_t = c_uint;
-pub type pid_t = usize;
 pub type uid_t = c_int;
 pub type gid_t = c_int;
 
-#[derive(Debug)]
-pub enum timezone {}
-impl Copy for timezone {}
-impl Clone for timezone {
-    fn clone(&self) -> timezone {
-        *self
-    }
+extern_ty! {
+    pub enum timezone {}
 }
 
-s_no_extra_traits! {
+s! {
     #[repr(C)]
     pub struct utsname {
         pub sysname: [c_char; UTSLENGTH],
@@ -67,12 +61,10 @@ s_no_extra_traits! {
 
     pub struct sockaddr_storage {
         pub ss_family: crate::sa_family_t,
-        __ss_padding: [u8; 128 - size_of::<sa_family_t>() - size_of::<c_ulong>()],
+        __ss_padding: Padding<[u8; 128 - size_of::<sa_family_t>() - size_of::<c_ulong>()]>,
         __ss_align: c_ulong,
     }
-}
 
-s! {
     pub struct addrinfo {
         pub ai_flags: c_int,
         pub ai_family: c_int,
@@ -161,7 +153,7 @@ s! {
     #[allow(unpredictable_function_pointer_comparisons)]
     pub struct sigaction {
         pub sa_sigaction: crate::sighandler_t,
-        pub sa_flags: c_ulong,
+        pub sa_flags: c_int,
         pub sa_restorer: Option<extern "C" fn()>,
         pub sa_mask: crate::sigset_t,
     }
@@ -170,7 +162,7 @@ s! {
         pub si_signo: c_int,
         pub si_errno: c_int,
         pub si_code: c_int,
-        _pad: [c_int; 29],
+        _pad: Padding<[c_int; 29]>,
         _align: [usize; 0],
     }
 
@@ -211,7 +203,7 @@ s! {
         pub st_mtime_nsec: c_long,
         pub st_ctime: crate::time_t,
         pub st_ctime_nsec: c_long,
-        _pad: [c_char; 24],
+        _pad: Padding<[c_char; 24]>,
     }
 
     pub struct statvfs {
@@ -254,7 +246,7 @@ s! {
     }
 
     pub struct ucred {
-        pub pid: pid_t,
+        pub pid: crate::pid_t,
         pub uid: uid_t,
         pub gid: gid_t,
     }
@@ -361,6 +353,7 @@ pub const RTLD_DEFAULT: *mut c_void = ptr::null_mut();
 // dlfcn.h
 pub const RTLD_LAZY: c_int = 0x0001;
 pub const RTLD_NOW: c_int = 0x0002;
+pub const RTLD_NOLOAD: c_int = 0x0004;
 pub const RTLD_GLOBAL: c_int = 0x0100;
 pub const RTLD_LOCAL: c_int = 0x0000;
 
@@ -510,9 +503,7 @@ pub const F_GETFD: c_int = 1;
 pub const F_SETFD: c_int = 2;
 pub const F_GETFL: c_int = 3;
 pub const F_SETFL: c_int = 4;
-// FIXME(redox): relibc {
-pub const F_DUPFD_CLOEXEC: c_int = crate::F_DUPFD;
-// }
+pub const F_DUPFD_CLOEXEC: c_int = 1030;
 pub const FD_CLOEXEC: c_int = 0x0100_0000;
 pub const O_RDONLY: c_int = 0x0001_0000;
 pub const O_WRONLY: c_int = 0x0002_0000;
@@ -538,13 +529,13 @@ pub const O_NOFOLLOW: c_int = -0x8000_0000;
 pub const O_NOCTTY: c_int = 0x00000200;
 
 // locale.h
-pub const LC_ALL: c_int = 0;
-pub const LC_COLLATE: c_int = 1;
-pub const LC_CTYPE: c_int = 2;
-pub const LC_MESSAGES: c_int = 3;
-pub const LC_MONETARY: c_int = 4;
-pub const LC_NUMERIC: c_int = 5;
-pub const LC_TIME: c_int = 6;
+pub const LC_COLLATE: c_int = 0;
+pub const LC_CTYPE: c_int = 1;
+pub const LC_MESSAGES: c_int = 2;
+pub const LC_MONETARY: c_int = 3;
+pub const LC_NUMERIC: c_int = 4;
+pub const LC_TIME: c_int = 5;
+pub const LC_ALL: c_int = 6;
 
 // netdb.h
 pub const AI_PASSIVE: c_int = 0x0001;
@@ -582,7 +573,9 @@ pub const IPV6_MULTICAST_IF: c_int = 17;
 pub const IPV6_MULTICAST_HOPS: c_int = 18;
 pub const IPV6_MULTICAST_LOOP: c_int = 19;
 pub const IPV6_ADD_MEMBERSHIP: c_int = 20;
+pub const IPV6_JOIN_GROUP: c_int = 20;
 pub const IPV6_DROP_MEMBERSHIP: c_int = 21;
+pub const IPV6_LEAVE_GROUP: c_int = 21;
 pub const IPV6_V6ONLY: c_int = 26;
 pub const IP_MULTICAST_IF: c_int = 32;
 pub const IP_MULTICAST_TTL: c_int = 33;
@@ -590,7 +583,7 @@ pub const IP_MULTICAST_LOOP: c_int = 34;
 pub const IP_ADD_MEMBERSHIP: c_int = 35;
 pub const IP_DROP_MEMBERSHIP: c_int = 36;
 pub const IP_TOS: c_int = 1;
-pub const IP_RECVTOS: c_int = 2;
+pub const IP_RECVTOS: c_int = 13;
 pub const IPPROTO_IGMP: c_int = 2;
 pub const IPPROTO_PUP: c_int = 12;
 pub const IPPROTO_IDP: c_int = 22;
@@ -600,9 +593,10 @@ pub const IPPROTO_MAX: c_int = 255;
 
 // netinet/tcp.h
 pub const TCP_NODELAY: c_int = 1;
-// FIXME(redox): relibc {
-pub const TCP_KEEPIDLE: c_int = 1;
-// }
+pub const TCP_MAXSEG: c_int = 2;
+pub const TCP_KEEPIDLE: c_int = 4;
+pub const TCP_KEEPINTVL: c_int = 5;
+pub const TCP_KEEPCNT: c_int = 6;
 
 // poll.h
 pub const POLLIN: c_short = 0x001;
@@ -617,8 +611,14 @@ pub const POLLWRNORM: c_short = 0x100;
 pub const POLLWRBAND: c_short = 0x200;
 
 // pthread.h
-pub const PTHREAD_MUTEX_NORMAL: c_int = 0;
-pub const PTHREAD_MUTEX_RECURSIVE: c_int = 1;
+pub const PTHREAD_MUTEX_DEFAULT: c_int = 0;
+pub const PTHREAD_MUTEX_ERRORCHECK: c_int = 1;
+pub const PTHREAD_MUTEX_NORMAL: c_int = 2;
+pub const PTHREAD_MUTEX_RECURSIVE: c_int = 3;
+
+pub const PTHREAD_MUTEX_ROBUST: c_int = 0;
+pub const PTHREAD_MUTEX_STALLED: c_int = 1;
+
 pub const PTHREAD_MUTEX_INITIALIZER: crate::pthread_mutex_t = crate::pthread_mutex_t {
     bytes: [0; _PTHREAD_MUTEX_SIZE],
 };
@@ -667,14 +667,14 @@ pub const SIGPWR: c_int = 30;
 pub const SIGSYS: c_int = 31;
 pub const NSIG: c_int = 32;
 
-pub const SA_NOCLDWAIT: c_ulong = 0x0000_0002;
-pub const SA_RESTORER: c_ulong = 0x0000_0004; // FIXME(redox): remove after relibc removes it
-pub const SA_SIGINFO: c_ulong = 0x0200_0000;
-pub const SA_ONSTACK: c_ulong = 0x0400_0000;
-pub const SA_RESTART: c_ulong = 0x0800_0000;
-pub const SA_NODEFER: c_ulong = 0x1000_0000;
-pub const SA_RESETHAND: c_ulong = 0x2000_0000;
-pub const SA_NOCLDSTOP: c_ulong = 0x4000_0000;
+pub const SA_NOCLDWAIT: c_int = 0x0000_0002;
+pub const SA_RESTORER: c_int = 0x0000_0004; // FIXME(redox): remove after relibc removes it
+pub const SA_SIGINFO: c_int = 0x0200_0000;
+pub const SA_ONSTACK: c_int = 0x0400_0000;
+pub const SA_RESTART: c_int = 0x0800_0000;
+pub const SA_NODEFER: c_int = 0x1000_0000;
+pub const SA_RESETHAND: c_int = 0x2000_0000;
+pub const SA_NOCLDSTOP: c_int = 0x4000_0000;
 
 // sys/file.h
 pub const LOCK_SH: c_int = 1;
@@ -1071,9 +1071,6 @@ pub const _IONBF: c_int = 2;
 pub const SEEK_SET: c_int = 0;
 pub const SEEK_CUR: c_int = 1;
 pub const SEEK_END: c_int = 2;
-pub const STDIN_FILENO: c_int = 0;
-pub const STDOUT_FILENO: c_int = 1;
-pub const STDERR_FILENO: c_int = 2;
 
 pub const _PC_LINK_MAX: c_int = 0;
 pub const _PC_MAX_CANON: c_int = 1;
@@ -1100,6 +1097,8 @@ pub const _PC_2_SYMLINKS: c_int = 20;
 pub const PRIO_PROCESS: c_int = 0;
 pub const PRIO_PGRP: c_int = 1;
 pub const PRIO_USER: c_int = 2;
+
+pub const RENAME_NOREPLACE: c_uint = 1;
 
 f! {
     //sys/socket.h
@@ -1173,6 +1172,31 @@ safe_f! {
     pub const fn WCOREDUMP(status: c_int) -> bool {
         (status & 0x80) != 0
     }
+
+    pub const fn makedev(major: c_uint, minor: c_uint) -> dev_t {
+        let major = major as dev_t;
+        let minor = minor as dev_t;
+        let mut dev = 0;
+        dev |= (major & 0x00000fff) << 8;
+        dev |= (major & 0xfffff000) << 32;
+        dev |= (minor & 0x000000ff) << 0;
+        dev |= (minor & 0xffffff00) << 12;
+        dev
+    }
+
+    pub const fn major(dev: dev_t) -> c_uint {
+        let mut major = 0;
+        major |= (dev & 0x00000000000fff00) >> 8;
+        major |= (dev & 0xfffff00000000000) >> 32;
+        major as c_uint
+    }
+
+    pub const fn minor(dev: dev_t) -> c_uint {
+        let mut minor = 0;
+        minor |= (dev & 0x00000000000000ff) >> 0;
+        minor |= (dev & 0x00000ffffff00000) >> 12;
+        minor as c_uint
+    }
 }
 
 extern "C" {
@@ -1186,6 +1210,18 @@ extern "C" {
     // unistd.h
     pub fn pipe2(fds: *mut c_int, flags: c_int) -> c_int;
     pub fn getdtablesize() -> c_int;
+    pub fn getresgid(
+        rgid: *mut crate::gid_t,
+        egid: *mut crate::gid_t,
+        sgid: *mut crate::gid_t,
+    ) -> c_int;
+    pub fn getresuid(
+        ruid: *mut crate::uid_t,
+        euid: *mut crate::uid_t,
+        suid: *mut crate::uid_t,
+    ) -> c_int;
+    pub fn setresgid(rgid: crate::gid_t, egid: crate::gid_t, sgid: crate::gid_t) -> c_int;
+    pub fn setresuid(ruid: crate::uid_t, euid: crate::uid_t, suid: crate::uid_t) -> c_int;
 
     // grp.h
     pub fn getgrent() -> *mut crate::group;
@@ -1273,6 +1309,17 @@ extern "C" {
         result: *mut *mut passwd,
     ) -> c_int;
 
+    // semaphore.h
+    pub fn sem_destroy(sem: *mut sem_t) -> c_int;
+    pub fn sem_init(sem: *mut sem_t, pshared: c_int, value: c_uint) -> c_int;
+    pub fn sem_clockwait(
+        sem: *mut sem_t,
+        clock_id: clockid_t,
+        abstime: *const crate::timespec,
+    ) -> c_int;
+    pub fn sem_timedwait(sem: *mut sem_t, abstime: *const crate::timespec) -> c_int;
+    pub fn sem_getvalue(sem: *mut sem_t, sval: *mut c_int) -> c_int;
+
     // signal.h
     pub fn pthread_sigmask(
         how: c_int,
@@ -1297,6 +1344,15 @@ extern "C" {
     pub fn mkostemp(template: *mut c_char, flags: c_int) -> c_int;
     pub fn mkostemps(template: *mut c_char, suffixlen: c_int, flags: c_int) -> c_int;
     pub fn reallocarray(ptr: *mut c_void, nmemb: size_t, size: size_t) -> *mut c_void;
+
+    // stdio.h
+    pub fn renameat2(
+        olddirfd: c_int,
+        oldpath: *const c_char,
+        newdirfd: c_int,
+        newpath: *const c_char,
+        flags: c_uint,
+    ) -> c_int;
 
     // string.h
     pub fn explicit_bzero(p: *mut c_void, len: size_t);
@@ -1374,123 +1430,4 @@ extern "C" {
 
     // utmp.h
     pub fn login_tty(fd: c_int) -> c_int;
-}
-
-cfg_if! {
-    if #[cfg(feature = "extra_traits")] {
-        impl PartialEq for dirent {
-            fn eq(&self, other: &dirent) -> bool {
-                self.d_ino == other.d_ino
-                    && self.d_off == other.d_off
-                    && self.d_reclen == other.d_reclen
-                    && self.d_type == other.d_type
-                    && self
-                        .d_name
-                        .iter()
-                        .zip(other.d_name.iter())
-                        .all(|(a, b)| a == b)
-            }
-        }
-
-        impl Eq for dirent {}
-
-        impl hash::Hash for dirent {
-            fn hash<H: hash::Hasher>(&self, state: &mut H) {
-                self.d_ino.hash(state);
-                self.d_off.hash(state);
-                self.d_reclen.hash(state);
-                self.d_type.hash(state);
-                self.d_name.hash(state);
-            }
-        }
-
-        impl PartialEq for sockaddr_un {
-            fn eq(&self, other: &sockaddr_un) -> bool {
-                self.sun_family == other.sun_family
-                    && self
-                        .sun_path
-                        .iter()
-                        .zip(other.sun_path.iter())
-                        .all(|(a, b)| a == b)
-            }
-        }
-
-        impl Eq for sockaddr_un {}
-
-        impl hash::Hash for sockaddr_un {
-            fn hash<H: hash::Hasher>(&self, state: &mut H) {
-                self.sun_family.hash(state);
-                self.sun_path.hash(state);
-            }
-        }
-
-        impl PartialEq for sockaddr_storage {
-            fn eq(&self, other: &sockaddr_storage) -> bool {
-                self.ss_family == other.ss_family
-                    && self.__ss_align == self.__ss_align
-                    && self
-                        .__ss_padding
-                        .iter()
-                        .zip(other.__ss_padding.iter())
-                        .all(|(a, b)| a == b)
-            }
-        }
-
-        impl Eq for sockaddr_storage {}
-
-        impl hash::Hash for sockaddr_storage {
-            fn hash<H: hash::Hasher>(&self, state: &mut H) {
-                self.ss_family.hash(state);
-                self.__ss_padding.hash(state);
-                self.__ss_align.hash(state);
-            }
-        }
-
-        impl PartialEq for utsname {
-            fn eq(&self, other: &utsname) -> bool {
-                self.sysname
-                    .iter()
-                    .zip(other.sysname.iter())
-                    .all(|(a, b)| a == b)
-                    && self
-                        .nodename
-                        .iter()
-                        .zip(other.nodename.iter())
-                        .all(|(a, b)| a == b)
-                    && self
-                        .release
-                        .iter()
-                        .zip(other.release.iter())
-                        .all(|(a, b)| a == b)
-                    && self
-                        .version
-                        .iter()
-                        .zip(other.version.iter())
-                        .all(|(a, b)| a == b)
-                    && self
-                        .machine
-                        .iter()
-                        .zip(other.machine.iter())
-                        .all(|(a, b)| a == b)
-                    && self
-                        .domainname
-                        .iter()
-                        .zip(other.domainname.iter())
-                        .all(|(a, b)| a == b)
-            }
-        }
-
-        impl Eq for utsname {}
-
-        impl hash::Hash for utsname {
-            fn hash<H: hash::Hasher>(&self, state: &mut H) {
-                self.sysname.hash(state);
-                self.nodename.hash(state);
-                self.release.hash(state);
-                self.version.hash(state);
-                self.machine.hash(state);
-                self.domainname.hash(state);
-            }
-        }
-    }
 }

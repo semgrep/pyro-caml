@@ -1,4 +1,4 @@
-//! Rust integration for [Pyroscope](https://pyroscope.io).
+//! Rust integration for [Pyroscope](https://grafana.com/oss/pyroscope/).
 //!
 //! # Quick Start
 //!
@@ -6,17 +6,27 @@
 //!
 //! ```toml
 //! [dependencies]
-//! pyroscope = "0.5"
-//! pyroscope_pprofrs = "0.2"
+//! pyroscope = { version = "2.0.0", features = ["backend-pprof-rs"] }
 //! ```
 //!
 //! ## Configure a Pyroscope Agent
 //!
-//! ```ignore
-//! let agent =
-//!     PyroscopeAgent::builder("http://localhost:4040", "myapp")
-//!     .backend(Pprof::new(PprofConfig::new().sample_rate(100)))
-//!     .build()?;
+//! ```no_run
+//! use pyroscope::pyroscope::PyroscopeAgentBuilder;
+//! use pyroscope::backend::{pprof_backend, PprofConfig, BackendConfig};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let agent = PyroscopeAgentBuilder::new(
+//!     "http://localhost:4040",
+//!     "myapp",
+//!     100, // sample rate
+//!     "pyroscope-rs",
+//!     env!("CARGO_PKG_VERSION"),
+//!     pprof_backend(PprofConfig::default(), BackendConfig::default()),
+//! )
+//! .build()?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Start/Stop profiling
@@ -24,13 +34,13 @@
 //! To start profiling code and sending data.
 //!
 //! ```ignore
-//!  let agent_running = agent.start()?;
+//! let agent_running = agent.start()?;
 //! ```
 //!
 //! To stop profiling code. You can restart the profiling at a later point.
 //!
 //! ```ignore
-//!  let agent_ready = agent.stop()?;
+//! let agent_ready = agent_running.stop()?;
 //! ```
 //!
 //! Before you drop the variable, make sure to shutdown the agent.
@@ -45,7 +55,6 @@ extern crate core;
 pub use crate::pyroscope::PyroscopeAgent;
 pub use error::{PyroscopeError, Result};
 
-// Public modules
 pub mod backend;
 pub mod encode;
 pub mod error;
@@ -53,5 +62,6 @@ pub mod pyroscope;
 pub mod session;
 pub mod timer;
 
-// Private modules
 mod utils;
+pub use utils::ThreadId;
+pub mod ffikit;

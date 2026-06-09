@@ -10,10 +10,15 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2018"
+edition = "2024"
 name = "libflate_lz77"
-version = "1.2.0"
-authors = ["Takeru Ohta <phjgt308@gmail.com>"]
+version = "2.3.0"
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "LZ77 encoder for libflate crate"
 homepage = "https://github.com/sile/libflate"
 readme = "README.md"
@@ -22,27 +27,21 @@ categories = ["compression"]
 license = "MIT"
 repository = "https://github.com/sile/libflate"
 
-[dependencies.core2]
-version = "0.4"
-features = ["alloc"]
-optional = true
-default-features = false
+[features]
+default = ["std"]
+std = ["no_std_io2/std"]
+
+[lib]
+name = "libflate_lz77"
+path = "src/lib.rs"
 
 [dependencies.hashbrown]
-version = "0.13"
-optional = true
+version = "0.16"
+
+[dependencies.no_std_io2]
+version = "0.9"
+features = ["alloc"]
+default-features = false
 
 [dependencies.rle-decode-fast]
 version = "1.0.0"
-
-[dev-dependencies.libflate]
-version = "1"
-
-[features]
-no_std = [
-    "core2",
-    "hashbrown",
-]
-
-[badges.coveralls]
-repository = "sile/libflate"

@@ -11,9 +11,10 @@ use std::{
 
 // Internal
 use super::{ArgFlags, ArgSettings};
-#[cfg(feature = "unstable-ext")]
-use crate::builder::ext::Extension;
-use crate::builder::ext::Extensions;
+use crate::ArgAction;
+use crate::INTERNAL_ERROR_MSG;
+use crate::Id;
+use crate::ValueHint;
 use crate::builder::ArgPredicate;
 use crate::builder::IntoResettable;
 use crate::builder::OsStr;
@@ -22,11 +23,10 @@ use crate::builder::Str;
 use crate::builder::StyledStr;
 use crate::builder::Styles;
 use crate::builder::ValueRange;
+#[cfg(feature = "unstable-ext")]
+use crate::builder::ext::Extension;
+use crate::builder::ext::Extensions;
 use crate::util::AnyValueId;
-use crate::ArgAction;
-use crate::Id;
-use crate::ValueHint;
-use crate::INTERNAL_ERROR_MSG;
 
 /// The abstract representation of a command line argument. Used to set all the options and
 /// relationships that define a valid argument for the program.
@@ -81,7 +81,7 @@ pub struct Arg {
     pub(crate) num_vals: Option<ValueRange>,
     pub(crate) val_delim: Option<char>,
     pub(crate) default_vals: Vec<OsStr>,
-    pub(crate) default_vals_ifs: Vec<(Id, ArgPredicate, Option<OsStr>)>,
+    pub(crate) default_vals_ifs: Vec<(Id, ArgPredicate, Option<Vec<OsStr>>)>,
     pub(crate) default_missing_vals: Vec<OsStr>,
     #[cfg(feature = "env")]
     pub(crate) env: Option<(OsStr, Option<OsString>)>,
@@ -492,7 +492,7 @@ impl Arg {
     ///
     /// <div class="warning">
     ///
-    /// **NOTE:** When utilized with [`Arg::num_args(1..)`], only the **last** positional argument
+    /// **NOTE:** When utilized with [`Arg::num_args(1..)`][Arg::num_args], only the **last** positional argument
     /// may be defined as having a variable number of arguments (i.e. with the highest index)
     ///
     /// </div>
@@ -1359,7 +1359,7 @@ impl Arg {
     ///
     /// <div class="warning">
     ///
-    /// **NOTE:** implicitly sets [`Arg::action(ArgAction::Set)`].
+    /// **NOTE:** implicitly sets [`Arg::action(ArgAction::Set)`][ArgAction::Set].
     ///
     /// </div>
     ///
@@ -1487,7 +1487,7 @@ impl Arg {
     ///
     /// **WARNING:** Prior arguments with `allow_hyphen_values(true)` get precedence over known
     /// flags but known flags get precedence over the next possible positional argument with
-    /// `allow_hyphen_values(true)`.  When combined with [`Arg::num_args(..)`],
+    /// `allow_hyphen_values(true)`.  When combined with [`Arg::num_args(..)`][Arg::num_args],
     /// [`Arg::value_terminator`] is one way to ensure processing stops.
     ///
     /// </div>
@@ -2065,8 +2065,9 @@ impl Arg {
     /// # use clap_builder as clap;
     /// # use std::env;
     /// # use clap::{Command, Arg, ArgAction};
-    ///
+    /// # unsafe {
     /// env::set_var("MY_FLAG", "env");
+    /// # }
     ///
     /// let m = Command::new("prog")
     ///     .arg(Arg::new("flag")
@@ -2094,8 +2095,10 @@ impl Arg {
     /// # use clap::{Command, Arg, ArgAction};
     /// # use clap::builder::FalseyValueParser;
     ///
+    /// # unsafe {
     /// env::set_var("TRUE_FLAG", "true");
     /// env::set_var("FALSE_FLAG", "0");
+    /// # }
     ///
     /// let m = Command::new("prog")
     ///     .arg(Arg::new("true_flag")
@@ -2129,7 +2132,9 @@ impl Arg {
     /// # use std::env;
     /// # use clap::{Command, Arg, ArgAction};
     ///
+    /// # unsafe {
     /// env::set_var("MY_FLAG", "env");
+    /// # }
     ///
     /// let m = Command::new("prog")
     ///     .arg(Arg::new("flag")
@@ -2151,7 +2156,9 @@ impl Arg {
     /// # use std::env;
     /// # use clap::{Command, Arg, ArgAction};
     ///
+    /// # unsafe {
     /// env::set_var("MY_FLAG", "env");
+    /// # }
     ///
     /// let m = Command::new("prog")
     ///     .arg(Arg::new("flag")
@@ -2173,7 +2180,9 @@ impl Arg {
     /// # use std::env;
     /// # use clap::{Command, Arg, ArgAction};
     ///
+    /// # unsafe {
     /// env::set_var("MY_FLAG_MULTI", "env1,env2");
+    /// # }
     ///
     /// let m = Command::new("prog")
     ///     .arg(Arg::new("flag")
@@ -2410,9 +2419,10 @@ impl Arg {
         self
     }
 
-    /// Override the [current] help section.
+    /// Override the `--help` section this appears in.
     ///
-    /// [current]: crate::Command::next_help_heading
+    /// For more on the default help heading, see
+    /// [`Command::next_help_heading`][crate::Command::next_help_heading].
     #[inline]
     #[must_use]
     pub fn help_heading(mut self, heading: impl IntoResettable<Str>) -> Self {
@@ -3060,7 +3070,53 @@ impl Arg {
         self.default_vals_ifs.push((
             arg_id.into(),
             predicate.into(),
-            default.into_resettable().into_option(),
+            default
+                .into_resettable()
+                .into_option()
+                .map(|os_str| vec![os_str]),
+        ));
+        self
+    }
+
+    /// Specifies the values of the argument if `arg` has been used at runtime.
+    ///
+    /// See [`Arg::default_value_if`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use clap_builder::arg;
+    /// use clap_builder::Command;
+    /// use clap_builder::Arg;
+    /// let r = Command::new("df")
+    ///    .arg(arg!(--opt <FILE> "some arg"))
+    ///    .arg(
+    ///        Arg::new("args")
+    ///            .long("args")
+    ///            .num_args(2)
+    ///            .default_values_if("opt", "value", ["df1","df2"]),
+    ///    )
+    ///    .try_get_matches_from(vec!["", "--opt", "value"]);
+    ///
+    /// let m = r.unwrap();
+    /// assert_eq!(
+    ///    m.get_many::<String>("args").unwrap().collect::<Vec<_>>(),
+    ///    ["df1", "df2"]
+    /// );
+    /// ```
+    ///
+    /// [`Arg::default_value_if`]: Arg::default_value_if()
+    #[must_use]
+    pub fn default_values_if(
+        mut self,
+        arg_id: impl Into<Id>,
+        predicate: impl Into<ArgPredicate>,
+        defaults: impl IntoIterator<Item = impl Into<OsStr>>,
+    ) -> Self {
+        self.default_vals_ifs.push((
+            arg_id.into(),
+            predicate.into(),
+            Some(defaults.into_iter().map(|item| item.into()).collect()),
         ));
         self
     }
@@ -3111,10 +3167,10 @@ impl Arg {
     ///         .long("other")
     ///         .default_value_ifs([
     ///             ("flag", "true", Some("default")),
-    ///             ("opt", "channal", Some("chan")),
+    ///             ("opt", "channel", Some("chan")),
     ///         ]))
     ///     .get_matches_from(vec![
-    ///         "prog", "--opt", "channal"
+    ///         "prog", "--opt", "channel"
     ///     ]);
     ///
     /// assert_eq!(m.get_one::<String>("other").unwrap(), "chan");
@@ -3133,7 +3189,7 @@ impl Arg {
     ///         .long("other")
     ///         .default_value_ifs([
     ///             ("flag", "true", Some("default")),
-    ///             ("opt", "channal", Some("chan")),
+    ///             ("opt", "channel", Some("chan")),
     ///         ]))
     ///     .get_matches_from(vec![
     ///         "prog"
@@ -3160,10 +3216,10 @@ impl Arg {
     ///         .long("other")
     ///         .default_value_ifs([
     ///             ("flag", ArgPredicate::IsPresent, Some("default")),
-    ///             ("opt", ArgPredicate::Equals("channal".into()), Some("chan")),
+    ///             ("opt", ArgPredicate::Equals("channel".into()), Some("chan")),
     ///         ]))
     ///     .get_matches_from(vec![
-    ///         "prog", "--opt", "channal", "--flag"
+    ///         "prog", "--opt", "channel", "--flag"
     ///     ]);
     ///
     /// assert_eq!(m.get_one::<String>("other").unwrap(), "default");
@@ -3183,6 +3239,28 @@ impl Arg {
     ) -> Self {
         for (arg, predicate, default) in ifs {
             self = self.default_value_if(arg, predicate, default);
+        }
+        self
+    }
+
+    /// Specifies multiple values and conditions in the same manner as [`Arg::default_values_if`].
+    ///
+    /// See [`Arg::default_values_if`].
+    ///
+    /// [`Arg::default_values_if`]: Arg::default_values_if()
+    #[must_use]
+    pub fn default_values_ifs(
+        mut self,
+        ifs: impl IntoIterator<
+            Item = (
+                impl Into<Id>,
+                impl Into<ArgPredicate>,
+                impl IntoIterator<Item = impl Into<OsStr>>,
+            ),
+        >,
+    ) -> Self {
+        for (arg, predicate, default) in ifs {
+            self = self.default_values_if(arg, predicate, default);
         }
         self
     }

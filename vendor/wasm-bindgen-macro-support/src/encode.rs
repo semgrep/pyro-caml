@@ -108,7 +108,7 @@ impl Interner {
 
         // Generate a unique ID which is somewhat readable as well, so mix in
         // the crate name, hash to make it unique, and then the original path.
-        let new_identifier = format!("{}{}", self.unique_crate_identifier(), id);
+        let new_identifier = format!("{}{id}", self.unique_crate_identifier());
         let file = LocalFile {
             path,
             definition: span,
@@ -179,7 +179,7 @@ fn shared_program<'a>(
                         linked_module: file.linked_module,
                     })
                     .map_err(|e| {
-                        let msg = format!("failed to read file `{}`: {}", file.path.display(), e);
+                        let msg = format!("failed to read file `{}`: {e}", file.path.display());
                         Diagnostic::span_error(file.definition, msg)
                     })
             })
@@ -209,8 +209,16 @@ fn shared_export<'a>(
         comments: export.comments.iter().map(|s| &**s).collect(),
         consumed,
         function: shared_function(&export.function, intern),
+        js_namespace: export
+            .js_namespace
+            .as_ref()
+            .map(|ns| ns.iter().map(|s| &**s).collect()),
         method_kind,
-        start: export.start,
+        start: match export.start {
+            ast::StartKind::None => StartKind::None,
+            ast::StartKind::Public => StartKind::Public,
+            ast::StartKind::Private => StartKind::Private,
+        },
     })
 }
 
@@ -226,10 +234,11 @@ fn shared_function<'a>(func: &'a ast::Function, _intern: &'a Interner) -> Functi
                     if let syn::Pat::Ident(x) = &*arg.pat_type.pat {
                         x.ident.unraw().to_string()
                     } else {
-                        format!("arg{}", idx)
+                        format!("arg{idx}")
                     },
                 ),
                 ty_override: arg.js_type.as_deref(),
+                optional: arg.optional,
                 desc: arg.desc.as_deref(),
             })
             .collect::<Vec<_>>();
@@ -257,18 +266,44 @@ fn shared_enum<'a>(e: &'a ast::Enum, intern: &'a Interner) -> Enum<'a> {
             .collect(),
         comments: e.comments.iter().map(|s| &**s).collect(),
         generate_typescript: e.generate_typescript,
+        js_namespace: e
+            .js_namespace
+            .as_ref()
+            .map(|ns| ns.iter().map(|s| &**s).collect()),
+        private: e.private,
     }
 }
 
-fn shared_variant<'a>(v: &'a ast::Variant, intern: &'a Interner) -> EnumVariant<'a> {
+fn shared_variant<'a>(v: &'a ast::Variant, _intern: &'a Interner) -> EnumVariant<'a> {
     EnumVariant {
-        name: intern.intern(&v.name),
+        name: &v.js_name,
         value: v.value,
         comments: v.comments.iter().map(|s| &**s).collect(),
     }
 }
 
 fn shared_import<'a>(i: &'a ast::Import, intern: &'a Interner) -> Result<Import<'a>, Diagnostic> {
+    // Resolve reexport name: use explicit rename if provided, otherwise use the import's name
+    let reexport = i.reexport.as_ref().map(|rename_opt| {
+        rename_opt.clone().unwrap_or_else(|| {
+            // Get the default name from the import kind
+            match &i.kind {
+                ast::ImportKind::Type(t) => t.js_name.clone(),
+                ast::ImportKind::Function(f) => f.function.name.clone(),
+                ast::ImportKind::Static(s) => s.js_name.clone(),
+                _ => unreachable!("reexport only supported on types, functions, and statics"),
+            }
+        })
+    });
+
+    // Determine whether TypeScript should be generated for this import.
+    // For functions, this is stored on the Function struct; for types and statics,
+    // skip_typescript is not currently supported so we default to true.
+    let generate_typescript = match &i.kind {
+        ast::ImportKind::Function(f) => f.function.generate_typescript,
+        _ => true,
+    };
+
     Ok(Import {
         module: i
             .module
@@ -276,6 +311,8 @@ fn shared_import<'a>(i: &'a ast::Import, intern: &'a Interner) -> Result<Import<
             .map(|m| shared_module(m, intern, false))
             .transpose()?,
         js_namespace: i.js_namespace.clone(),
+        reexport,
+        generate_typescript,
         kind: shared_import_kind(&i.kind, intern)?,
     })
 }
@@ -322,6 +359,9 @@ fn shared_import_kind<'a>(
         ast::ImportKind::String(f) => ImportKind::String(shared_import_string(f, intern)),
         ast::ImportKind::Type(f) => ImportKind::Type(shared_import_type(f, intern)),
         ast::ImportKind::Enum(f) => ImportKind::Enum(shared_import_enum(f, intern)),
+        ast::ImportKind::DynamicUnion(f) => {
+            ImportKind::DynamicUnion(shared_import_dynamic_union(f, intern))
+        }
     })
 }
 
@@ -372,9 +412,40 @@ fn shared_import_type<'a>(i: &'a ast::ImportType, intern: &'a Interner) -> Impor
 
 fn shared_import_enum<'a>(i: &'a ast::StringEnum, _intern: &'a Interner) -> StringEnum<'a> {
     StringEnum {
+        name: &i.export_name,
+        generate_typescript: i.generate_typescript,
+        private: i.private,
+        variant_values: i.variant_values.iter().map(|x| &**x).collect(),
+        comments: i.comments.iter().map(|s| &**s).collect(),
+        js_namespace: i
+            .js_namespace
+            .as_ref()
+            .map(|ns| ns.iter().map(|s| &**s).collect()),
+    }
+}
+
+fn shared_import_dynamic_union<'a>(
+    i: &'a ast::DynamicUnion,
+    _intern: &'a Interner,
+) -> DynamicUnion<'a> {
+    let mut variant_strings = Vec::new();
+    let mut variant_type_cnt = 0;
+
+    for (idx, fields) in i.variant_fields.iter().enumerate() {
+        if fields.is_empty() {
+            variant_strings.push(&*i.variant_values[idx]);
+        } else {
+            variant_type_cnt += 1;
+        }
+    }
+
+    DynamicUnion {
         name: &i.js_name,
         generate_typescript: i.generate_typescript,
-        variant_values: i.variant_values.iter().map(|x| &**x).collect(),
+        private: i.private,
+        fallback: i.fallback,
+        variant_strings,
+        variant_type_cnt,
         comments: i.comments.iter().map(|s| &**s).collect(),
     }
 }
@@ -385,11 +456,27 @@ fn shared_struct<'a>(s: &'a ast::Struct, intern: &'a Interner) -> Struct<'a> {
         fields: s
             .fields
             .iter()
+            .filter(|f| !f.is_parent)
             .map(|s| shared_struct_field(s, intern))
             .collect(),
         comments: s.comments.iter().map(|s| &**s).collect(),
         is_inspectable: s.is_inspectable,
         generate_typescript: s.generate_typescript,
+        js_namespace: s
+            .js_namespace
+            .as_ref()
+            .map(|ns| ns.iter().map(|s| &**s).collect()),
+        private: s.private,
+        extends: s
+            .extends
+            .as_ref()
+            .and_then(|p| p.segments.last())
+            .map(|seg| intern.intern_str(&seg.ident.to_string())),
+        extends_js_class: s.extends_js_class.as_deref().map(|s| intern.intern_str(s)),
+        extends_js_namespace: s
+            .extends_js_namespace
+            .as_ref()
+            .map(|ns| ns.iter().map(|s| &**s).collect()),
     }
 }
 
@@ -609,6 +696,7 @@ fn from_ast_method_kind<'a>(
                     OperationKind::Getter(g.unwrap_or_else(|| function.infer_getter_property()))
                 }
                 ast::OperationKind::Regular => OperationKind::Regular,
+                ast::OperationKind::RegularThis => OperationKind::RegularThis,
                 ast::OperationKind::Setter(s) => {
                     let s = s.as_ref().map(|s| intern.intern_str(s));
                     OperationKind::Setter(match s {

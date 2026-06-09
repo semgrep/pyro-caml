@@ -12,12 +12,13 @@
         target_os = "solaris",
         target_os = "vita",
         target_os = "cygwin",
+        target_os = "horizon"
     )),
 ))]
-use std::os::fd::{AsRawFd, RawFd};
-#[cfg(all(debug_assertions, not(target_os = "wasi")))]
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
+#[cfg(all(debug_assertions, not(any(target_os = "wasi", target_os = "horizon"))))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(all(debug_assertions, not(target_os = "wasi")))]
+#[cfg(all(debug_assertions, not(any(target_os = "wasi", target_os = "horizon"))))]
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
@@ -72,7 +73,7 @@ use crate::{event, sys, Events, Interest, Token};
 /// // Register the stream with `Poll`
 /// poll.registry().register(&mut stream, Token(0), Interest::READABLE | Interest::WRITABLE)?;
 ///
-/// // Wait for the socket to become ready. This has to happens in a loop to
+/// // Wait for the socket to become ready. This has to happen in a loop to
 /// // handle spurious wakeups.
 /// loop {
 ///     poll.poll(&mut events, None)?;
@@ -273,7 +274,7 @@ pub struct Poll {
 pub struct Registry {
     selector: sys::Selector,
     /// Whether this selector currently has an associated waker.
-    #[cfg(all(debug_assertions, not(target_os = "wasi")))]
+    #[cfg(all(debug_assertions, not(any(target_os = "wasi", target_os = "horizon"))))]
     has_waker: Arc<AtomicBool>,
 }
 
@@ -323,7 +324,7 @@ impl Poll {
             sys::Selector::new().map(|selector| Poll {
                 registry: Registry {
                     selector,
-                    #[cfg(all(debug_assertions, not(target_os = "wasi")))]
+                    #[cfg(all(debug_assertions, not(any(target_os = "wasi", target_os = "horizon"))))]
                     has_waker: Arc::new(AtomicBool::new(false)),
                 },
             })
@@ -358,7 +359,8 @@ impl Poll {
     ///
     /// Note that the `timeout` will be rounded up to the system clock
     /// granularity (usually 1ms), and kernel scheduling delays mean that
-    /// the blocking interval may be overrun by a small amount.
+    /// the blocking interval may be overrun by a small amount. A timeout
+    /// of [`Duration::ZERO`] is not affected by this rounding.
     ///
     /// See the [struct] level documentation for a higher level discussion of
     /// polling.
@@ -387,6 +389,8 @@ impl Poll {
     #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
     /// # use std::error::Error;
     /// # fn main() -> Result<(), Box<dyn Error>> {
+    /// # // WASI does not yet support multithreading:
+    /// # if cfg!(target_os = "wasi") { return Ok(()) }
     /// use mio::{Events, Poll, Interest, Token};
     /// use mio::net::TcpStream;
     ///
@@ -416,7 +420,7 @@ impl Poll {
     ///     Token(0),
     ///     Interest::READABLE | Interest::WRITABLE)?;
     ///
-    /// // Wait for the socket to become ready. This has to happens in a loop to
+    /// // Wait for the socket to become ready. This has to happen in a loop to
     /// // handle spurious wakeups.
     /// loop {
     ///     poll.poll(&mut events, None)?;
@@ -452,6 +456,7 @@ impl Poll {
         target_os = "solaris",
         target_os = "vita",
         target_os = "cygwin",
+        target_os = "horizon"
     )),
 ))]
 impl AsRawFd for Poll {
@@ -712,14 +717,14 @@ impl Registry {
     pub fn try_clone(&self) -> io::Result<Registry> {
         self.selector.try_clone().map(|selector| Registry {
             selector,
-            #[cfg(all(debug_assertions, not(target_os = "wasi")))]
+            #[cfg(all(debug_assertions, not(any(target_os = "wasi", target_os = "horizon"))))]
             has_waker: Arc::clone(&self.has_waker),
         })
     }
 
     /// Internal check to ensure only a single `Waker` is active per [`Poll`]
     /// instance.
-    #[cfg(all(debug_assertions, not(target_os = "wasi")))]
+    #[cfg(all(debug_assertions, not(any(target_os = "wasi", target_os = "horizon"))))]
     pub(crate) fn register_waker(&self) {
         assert!(
             !self.has_waker.swap(true, Ordering::AcqRel),
@@ -729,6 +734,7 @@ impl Registry {
 
     /// Get access to the `sys::Selector`.
     #[cfg(any(not(target_os = "wasi"), feature = "net"))]
+    #[cfg_attr(target_os = "horizon", allow(dead_code))]
     pub(crate) fn selector(&self) -> &sys::Selector {
         &self.selector
     }
@@ -754,6 +760,30 @@ impl fmt::Debug for Registry {
         target_os = "solaris",
         target_os = "vita",
         target_os = "cygwin",
+        target_os = "horizon"
+    )),
+))]
+impl AsFd for Registry {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.selector.as_fd()
+    }
+}
+
+#[cfg(all(
+    unix,
+    not(mio_unsupported_force_poll_poll),
+    not(any(
+        target_os = "aix",
+        target_os = "espidf",
+        target_os = "haiku",
+        target_os = "fuchsia",
+        target_os = "hermit",
+        target_os = "hurd",
+        target_os = "nto",
+        target_os = "solaris",
+        target_os = "vita",
+        target_os = "cygwin",
+        target_os = "horizon"
     )),
 ))]
 impl AsRawFd for Registry {
@@ -775,6 +805,7 @@ cfg_os_poll! {
             target_os = "solaris",
             target_os = "vita",
             target_os = "cygwin",
+            target_os = "horizon"
         )),
     ))]
     #[test]

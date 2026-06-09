@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = GPUTexelCopyBufferLayout)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "GPUTexelCopyBufferLayout")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `GpuTexelCopyBufferLayout` dictionary."]
     #[doc = ""]
@@ -49,7 +49,16 @@ extern "C" {
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     #[wasm_bindgen(method, setter = "offset")]
-    pub fn set_offset(this: &GpuTexelCopyBufferLayout, val: f64);
+    pub fn set_offset(this: &GpuTexelCopyBufferLayout, val: u32);
+    #[cfg(web_sys_unstable_apis)]
+    #[doc = "Change the `offset` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `GpuTexelCopyBufferLayout`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    #[wasm_bindgen(method, setter = "offset")]
+    pub fn set_offset_f64(this: &GpuTexelCopyBufferLayout, val: f64);
     #[cfg(web_sys_unstable_apis)]
     #[doc = "Get the `rowsPerImage` field of this object."]
     #[doc = ""]
@@ -90,7 +99,7 @@ impl GpuTexelCopyBufferLayout {
     }
     #[cfg(web_sys_unstable_apis)]
     #[deprecated = "Use `set_offset()` instead."]
-    pub fn offset(&mut self, val: f64) -> &mut Self {
+    pub fn offset(&mut self, val: u32) -> &mut Self {
         self.set_offset(val);
         self
     }

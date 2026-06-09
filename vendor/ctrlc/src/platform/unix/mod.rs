@@ -90,7 +90,7 @@ pub unsafe fn init_os_handler(overwrite: bool) -> Result<(), Error> {
         signal::SigAction::new(handler, signal::SaFlags::empty(), signal::SigSet::empty());
 
     let sigint_old = signal::sigaction(signal::Signal::SIGINT, &new_action)?;
-    if !overwrite && sigint_old.handler() != signal::SigHandler::SigDfl {
+    if !overwrite && !matches!(sigint_old.handler(), signal::SigHandler::SigDfl) {
         signal::sigaction(signal::Signal::SIGINT, &sigint_old).unwrap();
         return Err(nix::Error::EEXIST);
     }
@@ -104,7 +104,7 @@ pub unsafe fn init_os_handler(overwrite: bool) -> Result<(), Error> {
                 return Err(e);
             }
         };
-        if !overwrite && sigterm_old.handler() != signal::SigHandler::SigDfl {
+        if !overwrite && !matches!(sigterm_old.handler(), signal::SigHandler::SigDfl) {
             signal::sigaction(signal::Signal::SIGINT, &sigint_old).unwrap();
             signal::sigaction(signal::Signal::SIGTERM, &sigterm_old).unwrap();
             return Err(nix::Error::EEXIST);
@@ -117,7 +117,7 @@ pub unsafe fn init_os_handler(overwrite: bool) -> Result<(), Error> {
                 return Err(e);
             }
         };
-        if !overwrite && sighup_old.handler() != signal::SigHandler::SigDfl {
+        if !overwrite && !matches!(sighup_old.handler(), signal::SigHandler::SigDfl) {
             signal::sigaction(signal::Signal::SIGINT, &sigint_old).unwrap();
             signal::sigaction(signal::Signal::SIGTERM, &sigterm_old).unwrap();
             signal::sigaction(signal::Signal::SIGHUP, &sighup_old).unwrap();

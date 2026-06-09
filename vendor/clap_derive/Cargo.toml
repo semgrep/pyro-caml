@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.74"
+edition = "2024"
+rust-version = "1.85"
 name = "clap_derive"
-version = "4.5.49"
+version = "4.6.1"
 build = false
 include = [
     "build.rs",
@@ -43,6 +43,7 @@ categories = [
 ]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/clap-rs/clap"
+resolver = "2"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -71,25 +72,25 @@ bench = false
 proc-macro = true
 
 [dependencies.anstyle]
-version = "1.0.10"
+version = "1.0.14"
 optional = true
 
 [dependencies.heck]
 version = "0.5.0"
 
 [dependencies.proc-macro2]
-version = "1.0.69"
+version = "1.0.106"
 
 [dependencies.pulldown-cmark]
-version = "0.13.0"
+version = "0.13.3"
 optional = true
 default-features = false
 
 [dependencies.quote]
-version = "1.0.9"
+version = "1.0.45"
 
 [dependencies.syn]
-version = "2.0.8"
+version = "2.0.117"
 features = ["full"]
 
 [lints.clippy]
@@ -103,7 +104,7 @@ create_dir = "warn"
 dbg_macro = "warn"
 debug_assert_with_mut_call = "warn"
 doc_markdown = "warn"
-empty_enum = "warn"
+empty_enums = "warn"
 enum_glob_use = "warn"
 expl_impl_clone_on_copy = "warn"
 explicit_deref_methods = "warn"

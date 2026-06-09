@@ -7,8 +7,8 @@ use nix::{
     unistd::Pid,
 };
 use pyroscope::{
-    backend::{BackendConfig, BackendImpl},
-    pyroscope::{PyroscopeAgentBuilder, ReportEncoding},
+    backend::{BackendConfig, BackendImpl, BackendUninitialized},
+    pyroscope::PyroscopeAgentBuilder,
 };
 use tempdir::TempDir;
 
@@ -79,7 +79,7 @@ struct Cli {
 }
 // Convert a string of tags to a Vec<(&str, &str)>, so we can parse the tags
 // config value
-fn string_to_tags<'a>(tags: &'a str) -> Vec<(&'a str, &'a str)> {
+fn string_to_tags(tags: &str) -> Vec<(&str, &str)> {
     let mut tags_vec = Vec::new();
 
     // check if string is empty
@@ -102,10 +102,11 @@ fn make_agent_builder(
     tags: Vec<(&str, &str)>,
     basic_auth_username: Option<&str>,
     basic_auth_password: Option<&str>,
+    sample_rate: u32,
+    backend: BackendImpl<BackendUninitialized>
 ) -> PyroscopeAgentBuilder {
-    let mut agent_builder = PyroscopeAgentBuilder::new(server_address, service_name);
+    let mut agent_builder = PyroscopeAgentBuilder::new(server_address, service_name, sample_rate, "camlspy", env!("CARGO_PKG_VERSION"), backend);
     agent_builder = agent_builder
-        .report_encoding(ReportEncoding::PPROF)
         // TODO: add some tags about pyro caml's version
         .tags(tags);
     // Optionally configure auth. localhost:4040 usually doesn't need it but
@@ -148,19 +149,11 @@ fn main() {
 
     log::info!(target: LOG_TAG, "Sending profiles to Pyroscope server at: {}", cli.server_address);
 
-    let mut agent_builder = make_agent_builder(
-        &cli.server_address,
-        &cli.service_name,
-        string_to_tags(&cli.tags),
-        cli.basic_auth_username.as_deref(),
-        cli.basic_auth_password.as_deref(),
-    );
     let backend_config = BackendConfig {
         report_thread_id: true,
         report_thread_name: true,
         // do we really care about this?
         report_pid: true,
-        report_oncpu: true,
     };
     log::info!(target: LOG_TAG, "Starting child process: {:?} {:?}", bin, args.clone());
     // fork and call bin_path with args
@@ -181,16 +174,25 @@ fn main() {
     };
     let backend = BackendImpl::new(
         Box::new(CamlSpy::new(camlspy_config.clone(), backend_config)),
-        Some(backend_config),
     );
-    agent_builder = agent_builder.backend(backend);
+
+    let agent_builder = make_agent_builder(
+        &cli.server_address,
+        &cli.service_name,
+        string_to_tags(&cli.tags),
+        cli.basic_auth_username.as_deref(),
+        cli.basic_auth_password.as_deref(),
+        cli.sample_rate,
+        backend
+    );
+
     let agent = agent_builder.build().unwrap();
     let agent_running = agent.start().unwrap();
 
     ctrlc::set_handler(move || {
         log::info!(target: LOG_TAG, "Received Ctrl-C, shutting down...");
 
-        signal::kill(Pid::from_raw(child_id.clone() as i32), Signal::SIGTERM)
+        signal::kill(Pid::from_raw(child_id as i32), Signal::SIGTERM)
             .expect("Failed to send SIGTERM to child process");
     })
     .expect("Error setting Ctrl-C handler");

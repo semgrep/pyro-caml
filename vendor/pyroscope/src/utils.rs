@@ -1,54 +1,6 @@
-use crate::backend::Tag;
+use std::fmt;
+
 use crate::{error::Result, PyroscopeError};
-
-/// Format application_name with tags.
-pub fn merge_tags_with_app_name(application_name: String, tags: Vec<Tag>) -> Result<String> {
-    // tags empty, return application_name
-    if tags.is_empty() {
-        return Ok(application_name);
-    }
-
-    let tags_vec = tags
-        .iter()
-        // filter tags for reserved keywords
-        .filter(|tag| tag.key != "__name__")
-        // format tags
-        .map(|tag| format!("{}", tag))
-        .collect::<Vec<String>>();
-
-    // join tags string by comma
-    let tags_str = tags_vec.join(",");
-
-    // return formatted application_name with tags
-    Ok(format!("{}{{{}}}", application_name, tags_str))
-}
-
-#[cfg(test)]
-mod merge_tags_with_app_name_tests {
-    use crate::{backend::Tag, utils::merge_tags_with_app_name};
-
-    #[test]
-    fn merge_tags_with_app_name_with_tags() {
-        let mut tags = Vec::new();
-        tags.push(Tag::new("env".to_string(), "staging".to_string()));
-        tags.push(Tag::new("region".to_string(), "us-west-1".to_string()));
-        tags.push(Tag::new("__name__".to_string(), "reserved".to_string()));
-
-        assert_eq!(
-            merge_tags_with_app_name("my.awesome.app.cpu".to_string(), tags.into_iter().collect())
-                .unwrap(),
-            "my.awesome.app.cpu{env=staging,region=us-west-1}".to_string()
-        )
-    }
-
-    #[test]
-    fn merge_tags_with_app_name_without_tags() {
-        assert_eq!(
-            merge_tags_with_app_name("my.awesome.app.cpu".to_string(), Vec::new()).unwrap(),
-            "my.awesome.app.cpu".to_string()
-        )
-    }
-}
 
 /// Error Wrapper for libc return. Only check for errors.
 pub fn check_err<T: Ord + Default>(num: T) -> Result<T> {
@@ -73,33 +25,37 @@ mod check_err_tests {
     }
 }
 
-#[cfg(all(not(target_os = "windows"), not(target_env = "musl")))]
-pub fn pthread_self() -> Result<u64> {
-    let thread_id = check_err(unsafe { libc::pthread_self() })? as u64;
-    Ok(thread_id)
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
+pub struct ThreadId {
+    pthread: libc::pthread_t,
 }
 
-#[cfg(all(not(target_os = "windows"), target_env = "musl"))]
-pub fn pthread_self() -> Result<u64> {
-    let thread_id = unsafe { libc::pthread_self() } as u64;
-    Ok(thread_id)
+// SAFETY: pthread_t is an opaque thread identifier used as a handle,
+// never dereferenced. On musl it's *mut c_void, on glibc it's c_ulong.
+unsafe impl Send for ThreadId {}
+unsafe impl Sync for ThreadId {}
+
+impl From<libc::pthread_t> for ThreadId {
+    fn from(value: libc::pthread_t) -> Self {
+        Self { pthread: value }
+    }
+}
+impl ThreadId {
+    pub fn pthread_self() -> Self {
+        Self {
+            pthread: unsafe { libc::pthread_self() },
+        }
+    }
 }
 
-#[cfg(target_os = "windows")]
-pub fn pthread_self() -> Result<u64> {
-    let thread_id =
-        check_err(unsafe { winapi::um::processthreadsapi::GetCurrentThreadId() })? as u64;
-    Ok(thread_id)
-}
-
-#[cfg(test)]
-mod pthread_self_tests {
-    use crate::utils::pthread_self;
-
-    #[test]
-    fn pthread_self_success() {
-        // This function should always succeeds.
-        assert!(pthread_self().is_ok())
+impl fmt::Display for ThreadId {
+    #[cfg(target_env = "musl")]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", { self.pthread as libc::uintptr_t })
+    }
+    #[cfg(not(target_env = "musl"))]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", { self.pthread })
     }
 }
 

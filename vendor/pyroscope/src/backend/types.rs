@@ -1,11 +1,9 @@
+use super::BackendConfig;
+use crate::error::Result;
 use std::{
     collections::{hash_map::DefaultHasher, BTreeSet, HashMap},
     hash::{Hash, Hasher},
 };
-
-use crate::error::Result;
-
-use super::BackendConfig;
 
 /// Pyroscope Tag
 #[derive(Debug, PartialOrd, Ord, Eq, PartialEq, Hash, Clone)]
@@ -62,37 +60,27 @@ impl StackBuffer {
     }
 }
 
-/// Split a Stack Buffer into Reports
 impl From<StackBuffer> for Vec<Report> {
     fn from(stack_buffer: StackBuffer) -> Self {
         stack_buffer
             .data
             .into_iter()
             .fold(
-                Ok(HashMap::new()),
-                |acc: Result<HashMap<usize, Report>>, (stacktrace, count): (StackTrace, usize)| {
-                    let mut acc = acc?;
-                    // if a report exists for this stacktrace, add the count to it
+                HashMap::new(),
+                |acc: HashMap<usize, Report>, (stacktrace, count): (StackTrace, usize)| {
+                    let mut acc = acc;
                     if let Some(report) = acc.get_mut(&stacktrace.metadata.get_id()) {
-                        // record the count
-                        report.record_with_count(stacktrace, count)?;
-                    // if no report exists,
+                        report.record_with_count(stacktrace, count);
                     } else {
-                        // create a new report
                         let report = Report::new(HashMap::new());
                         let report_id = stacktrace.metadata.get_id();
-                        // set the metadata of the report, from the stacktrace own metadata.
                         let mut report = report.metadata(stacktrace.metadata.clone());
-                        // record the stacktrace. The count should be 1.
-                        report.record_with_count(stacktrace, count)?;
-                        // add the report to the accumulator.
+                        report.record_with_count(stacktrace, count);
                         acc.insert(report_id, report);
                     }
-                    // return the accumulator
-                    Ok(acc)
+                    acc
                 },
             )
-            .unwrap_or_default()
             .into_values()
             .collect()
     }
@@ -120,21 +108,31 @@ impl Metadata {
     }
 }
 
+/// The payload of a report batch: either structured stack-trace reports
+/// (which will be encoded into pprof by the session layer) or pre-encoded
+/// pprof bytes produced directly by a backend (e.g. jemalloc).
+pub enum ReportData {
+    /// Structured stack-trace reports that must be pprof-encoded before sending.
+    Reports(Vec<Report>),
+    /// Pre-encoded pprof bytes (may already be gzipped). Used by backends
+    /// like jemalloc that produce a complete pprof profile directly.
+    RawPprof(Vec<u8>),
+}
+
+/// A batch of reports with a shared profile type.
+pub struct ReportBatch {
+    /// Profile type name (e.g. "process_cpu", "memory")
+    pub profile_type: String,
+    /// Report data in this batch
+    pub data: ReportData,
+}
+
 /// Report
 #[derive(Debug, Default, Clone)]
 pub struct Report {
     /// Report StackTraces
     pub data: HashMap<StackTrace, usize>,
     /// Metadata
-    pub metadata: Metadata,
-}
-
-#[derive(Debug)]
-pub struct EncodedReport {
-    pub format: String,
-    pub content_type: String,
-    pub content_encoding: String,
-    pub data: Vec<u8>,
     pub metadata: Metadata,
 }
 
@@ -168,35 +166,12 @@ impl Report {
         }
     }
 
-    /// Record a new stack trace.
-    pub fn record(&mut self, stack_trace: StackTrace) -> Result<()> {
+    pub fn record(&mut self, stack_trace: StackTrace) {
         *self.data.entry(stack_trace).or_insert(0) += 1;
-
-        Ok(())
     }
 
-    /// Record a new stack trace with count.
-    pub fn record_with_count(&mut self, stack_trace: StackTrace, count: usize) -> Result<()> {
+    pub fn record_with_count(&mut self, stack_trace: StackTrace, count: usize) {
         *self.data.entry(stack_trace).or_insert(0) += count;
-
-        Ok(())
-    }
-
-    /// Clear the report data buffer.
-    pub fn clear(&mut self) {
-        self.data.clear();
-    }
-}
-
-impl std::fmt::Display for Report {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let collpased = self
-            .data
-            .iter()
-            .map(|(k, v)| format!("{} {}", k, v))
-            .collect::<Vec<String>>();
-
-        write!(f, "{}", collpased.join("\n"))
     }
 }
 
@@ -207,7 +182,7 @@ pub struct StackTrace {
     /// Process ID
     pub pid: Option<u32>,
     /// Thread ID
-    pub thread_id: Option<u64>,
+    pub thread_id: Option<crate::utils::ThreadId>,
     /// Thread Name
     pub thread_name: Option<String>,
     /// Stack Trace
@@ -225,7 +200,7 @@ impl std::fmt::Display for StackTrace {
                 .frames
                 .iter()
                 .rev()
-                .map(|frame| format!("{}", frame))
+                .map(|frame| format!("{frame}"))
                 .collect::<Vec<_>>()
                 .join(";")
         )
@@ -235,10 +210,12 @@ impl std::fmt::Display for StackTrace {
 impl StackTrace {
     /// Create a new StackTrace
     pub fn new(
-        config: &BackendConfig, pid: Option<u32>, thread_id: Option<u64>,
-        thread_name: Option<String>, frames: Vec<StackFrame>,
+        config: &BackendConfig,
+        pid: Option<u32>,
+        thread_id: Option<crate::utils::ThreadId>,
+        thread_name: Option<String>,
+        frames: Vec<StackFrame>,
     ) -> Self {
-        // Set StackTrace specific tags
         let mut metadata = Metadata::default();
 
         if config.report_pid {
@@ -248,7 +225,7 @@ impl StackTrace {
         }
 
         if config.report_thread_id {
-            if let Some(thread_id) = thread_id {
+            if let Some(thread_id) = &thread_id {
                 metadata.add_tag(Tag::new("thread_id".to_owned(), thread_id.to_string()));
             }
         }
@@ -295,8 +272,12 @@ pub struct StackFrame {
 impl StackFrame {
     /// Create a new StackFrame.
     pub fn new(
-        module: Option<String>, name: Option<String>, filename: Option<String>,
-        relative_path: Option<String>, absolute_path: Option<String>, line: Option<u32>,
+        module: Option<String>,
+        name: Option<String>,
+        filename: Option<String>,
+        relative_path: Option<String>,
+        absolute_path: Option<String>,
+        line: Option<u32>,
     ) -> Self {
         Self {
             module,

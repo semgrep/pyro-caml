@@ -18,7 +18,7 @@
     <span> | </span>
     <a href="https://docs.rs/wasm-bindgen">API Docs</a>
     <span> | </span>
-    <a href="https://github.com/wasm-bindgen/wasm-bindgen/blob/master/CONTRIBUTING.md">Contributing</a>
+    <a href="https://github.com/wasm-bindgen/wasm-bindgen/blob/main/CONTRIBUTING.md">Contributing</a>
     <span> | </span>
     <a href="https://discord.gg/xMZ7CCY">Chat</a>
   </h3>
@@ -107,9 +107,19 @@ greet("World!");
 
 ## MSRV Policy
 
-Libraries that are released on [crates.io](https://crates.io) have a MSRV of v1.57. Changes to the MSRV will be accompanied by a minor version bump.
+* Libraries that are released on [crates.io](https://crates.io) have a MSRV of v1.77.
+* CLI tools and their corresponding support libraries have a MSRV of v1.86.
 
-CLI tools and their corresponding support libraries have a MSRV of v1.82. Changes to the MSRV will be accompanied by a patch version bump.
+The project aims to maintain a 2-year MSRV policy for libraries (meaning we support Rust versions released within the last 2 years), but with a shorter MSRV policy for the CLI. Changes to the MSRV may be made in patch versions, and will be logged in the CHANGELOG and MSRV history below.
+
+### MSRV History
+
+| Version | Library MSRV | CLI MSRV | Date       |
+|---------|--------------|----------|------------|
+| 0.2.118 | 1.77         | 1.86     | 2026-04-10 |
+| 0.2.106 | 1.71         | 1.82     | 2025-11-27 |
+| 0.2.103 | 1.57         | 1.82     | 2025-09-17 |
+| 0.2.93  | 1.57         | 1.76     | 2024-08-13 |
 
 ## License
 

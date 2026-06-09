@@ -72,7 +72,7 @@ impl Timer {
                     // Get the current time range
                     let from = TimerSignal::NextSnapshot(get_time_range(0)?.from);
 
-                    log::trace!(target: LOG_TAG, "Timer fired @ {}", from);
+                    log::trace!(target: LOG_TAG, "Timer fired @ {from}");
 
                     // Iterate through Senders
                     txs.lock()?.iter().for_each(|tx| {
@@ -114,11 +114,11 @@ impl Timer {
         // new_value sets the Timer
         let mut new_value = libc::itimerspec {
             it_interval: libc::timespec {
-                tv_sec: cycle.as_secs() as i64,
-                tv_nsec: cycle.subsec_nanos() as i64,
+                tv_sec: cycle.as_secs() as libc::c_long,
+                tv_nsec: cycle.subsec_nanos() as libc::c_long,
             },
             it_value: libc::timespec {
-                tv_sec: first_fire as i64,
+                tv_sec: first_fire as libc::c_long,
                 tv_nsec: 0,
             },
         };
@@ -205,21 +205,23 @@ impl Timer {
     }
 }
 
-/// Wrapper for libc functions.
-///
-/// Error wrapper for some libc functions used by the library. This only does
-/// Error (-1 return) wrapping. Alternatively, the nix crate could be used
-/// instead of expanding this wrappers (if more functions and types are used
-/// from libc)
+// Wrapper for libc functions.
+//
+// Error wrapper for some libc functions used by the library. This only does
+// Error (-1 return) wrapping. Alternatively, the nix crate could be used
+// instead of expanding this wrappers (if more functions and types are used
+// from libc)
 
-/// libc::timerfd wrapper
+// libc::timerfd wrapper
 pub fn timerfd_create(clockid: libc::clockid_t, clock_flags: libc::c_int) -> Result<i32> {
     check_err(unsafe { libc::timerfd_create(clockid, clock_flags) })
 }
 
 /// libc::timerfd_settime wrapper
 pub fn timerfd_settime(
-    timer_fd: i32, set_flags: libc::c_int, new_value: &mut libc::itimerspec,
+    timer_fd: i32,
+    set_flags: libc::c_int,
+    new_value: &mut libc::itimerspec,
     old_value: &mut libc::itimerspec,
 ) -> Result<()> {
     check_err(unsafe { libc::timerfd_settime(timer_fd, set_flags, new_value, old_value) })?;
@@ -233,7 +235,10 @@ pub fn epoll_create1(epoll_flags: libc::c_int) -> Result<i32> {
 
 /// libc::epoll_ctl wrapper
 pub fn epoll_ctl(
-    epoll_fd: i32, epoll_flags: libc::c_int, timer_fd: i32, event: &mut libc::epoll_event,
+    epoll_fd: i32,
+    epoll_flags: libc::c_int,
+    timer_fd: i32,
+    event: &mut libc::epoll_event,
 ) -> Result<()> {
     check_err(unsafe { libc::epoll_ctl(epoll_fd, epoll_flags, timer_fd, event) })?;
     Ok(())
@@ -244,7 +249,10 @@ pub fn epoll_ctl(
 /// # Safety
 /// This function is a wrapper for libc::epoll_wait.
 pub unsafe fn epoll_wait(
-    epoll_fd: i32, events: *mut libc::epoll_event, maxevents: libc::c_int, timeout: libc::c_int,
+    epoll_fd: i32,
+    events: *mut libc::epoll_event,
+    maxevents: libc::c_int,
+    timeout: libc::c_int,
 ) -> Result<()> {
     check_err(libc::epoll_wait(epoll_fd, events, maxevents, timeout))?;
     Ok(())

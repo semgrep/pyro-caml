@@ -5,7 +5,11 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = RTCRtpScriptTransform , typescript_type = "RTCRtpScriptTransform")]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "RTCRtpScriptTransform",
+        typescript_type = "RTCRtpScriptTransform"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `RtcRtpScriptTransform` class."]
     #[doc = ""]
@@ -57,6 +61,6 @@ extern "C" {
     pub fn new_with_options_and_transfer(
         worker: &Worker,
         options: &::wasm_bindgen::JsValue,
-        transfer: &::wasm_bindgen::JsValue,
+        transfer: &[::js_sys::Object],
     ) -> Result<RtcRtpScriptTransform, JsValue>;
 }

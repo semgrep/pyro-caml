@@ -5,7 +5,12 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = Event , extends = :: js_sys :: Object , js_name = XRInputSourcesChangeEvent , typescript_type = "XRInputSourcesChangeEvent")]
+    #[wasm_bindgen(
+        extends = "Event",
+        extends = "::js_sys::Object",
+        js_name = "XRInputSourcesChangeEvent",
+        typescript_type = "XRInputSourcesChangeEvent"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `XrInputSourcesChangeEvent` class."]
     #[doc = ""]
@@ -18,7 +23,12 @@ extern "C" {
     pub type XrInputSourcesChangeEvent;
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "XrSession")]
-    # [wasm_bindgen (structural , method , getter , js_class = "XRInputSourcesChangeEvent" , js_name = session)]
+    #[wasm_bindgen(
+        method,
+        getter,
+        js_class = "XRInputSourcesChangeEvent",
+        js_name = "session"
+    )]
     #[doc = "Getter for the `session` field of this object."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourcesChangeEvent/session)"]
@@ -29,27 +39,39 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     pub fn session(this: &XrInputSourcesChangeEvent) -> XrSession;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (structural , method , getter , js_class = "XRInputSourcesChangeEvent" , js_name = added)]
+    #[cfg(feature = "XrInputSource")]
+    #[wasm_bindgen(
+        method,
+        getter,
+        js_class = "XRInputSourcesChangeEvent",
+        js_name = "added"
+    )]
     #[doc = "Getter for the `added` field of this object."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourcesChangeEvent/added)"]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `XrInputSourcesChangeEvent`*"]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourcesChangeEvent`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn added(this: &XrInputSourcesChangeEvent) -> ::js_sys::Array;
+    pub fn added(this: &XrInputSourcesChangeEvent) -> ::js_sys::Array<XrInputSource>;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (structural , method , getter , js_class = "XRInputSourcesChangeEvent" , js_name = removed)]
+    #[cfg(feature = "XrInputSource")]
+    #[wasm_bindgen(
+        method,
+        getter,
+        js_class = "XRInputSourcesChangeEvent",
+        js_name = "removed"
+    )]
     #[doc = "Getter for the `removed` field of this object."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourcesChangeEvent/removed)"]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `XrInputSourcesChangeEvent`*"]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourcesChangeEvent`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn removed(this: &XrInputSourcesChangeEvent) -> ::js_sys::Array;
+    pub fn removed(this: &XrInputSourcesChangeEvent) -> ::js_sys::Array<XrInputSource>;
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "XrInputSourcesChangeEventInit")]
     #[wasm_bindgen(catch, constructor, js_class = "XRInputSourcesChangeEvent")]

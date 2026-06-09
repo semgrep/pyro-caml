@@ -1,7 +1,8 @@
 use anyhow::{bail, Error};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{Ident, Lit, Meta, MetaNameValue, NestedMeta};
+use syn::punctuated::Punctuated;
+use syn::{Expr, ExprLit, Ident, Lit, Meta, MetaNameValue, Path, Token};
 
 use crate::field::{scalar, set_option, tag_attr};
 
@@ -67,7 +68,11 @@ impl Field {
             {
                 let (k, v): (String, String) = match attr {
                     Meta::NameValue(MetaNameValue {
-                        lit: Lit::Str(lit), ..
+                        value:
+                            Expr::Lit(ExprLit {
+                                lit: Lit::Str(lit), ..
+                            }),
+                        ..
                     }) => {
                         let items = lit.value();
                         let mut items = items.split(',').map(ToString::to_string);
@@ -77,28 +82,19 @@ impl Field {
                             None => bail!("invalid map attribute: must have key and value types"),
                         };
                         if items.next().is_some() {
-                            bail!("invalid map attribute: {:?}", attr);
+                            bail!("invalid map attribute: {attr:?}");
                         }
                         (k, v)
                     }
                     Meta::List(meta_list) => {
-                        // TODO(rustlang/rust#23121): slice pattern matching would make this much nicer.
-                        if meta_list.nested.len() != 2 {
+                        let nested = meta_list
+                            .parse_args_with(Punctuated::<Ident, Token![,]>::parse_terminated)?
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        if nested.len() != 2 {
                             bail!("invalid map attribute: must contain key and value types");
                         }
-                        let k = match &meta_list.nested[0] {
-                            NestedMeta::Meta(Meta::Path(k)) if k.get_ident().is_some() => {
-                                k.get_ident().unwrap().to_string()
-                            }
-                            _ => bail!("invalid map attribute: key must be an identifier"),
-                        };
-                        let v = match &meta_list.nested[1] {
-                            NestedMeta::Meta(Meta::Path(v)) if v.get_ident().is_some() => {
-                                v.get_ident().unwrap().to_string()
-                            }
-                            _ => bail!("invalid map attribute: value must be an identifier"),
-                        };
-                        (k, v)
+                        (nested[0].to_string(), nested[1].to_string())
                     }
                     _ => return Ok(None),
                 };
@@ -128,21 +124,21 @@ impl Field {
     }
 
     /// Returns a statement which encodes the map field.
-    pub fn encode(&self, ident: TokenStream) -> TokenStream {
+    pub fn encode(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         let tag = self.tag;
         let key_mod = self.key_ty.module();
-        let ke = quote!(::prost::encoding::#key_mod::encode);
-        let kl = quote!(::prost::encoding::#key_mod::encoded_len);
+        let ke = quote!(#prost_path::encoding::#key_mod::encode);
+        let kl = quote!(#prost_path::encoding::#key_mod::encoded_len);
         let module = self.map_ty.module();
         match &self.value_ty {
             ValueTy::Scalar(scalar::Ty::Enumeration(ty)) => {
                 let default = quote!(#ty::default() as i32);
                 quote! {
-                    ::prost::encoding::#module::encode_with_default(
+                    #prost_path::encoding::#module::encode_with_default(
                         #ke,
                         #kl,
-                        ::prost::encoding::int32::encode,
-                        ::prost::encoding::int32::encoded_len,
+                        #prost_path::encoding::int32::encode,
+                        #prost_path::encoding::int32::encoded_len,
                         &(#default),
                         #tag,
                         &#ident,
@@ -152,10 +148,10 @@ impl Field {
             }
             ValueTy::Scalar(value_ty) => {
                 let val_mod = value_ty.module();
-                let ve = quote!(::prost::encoding::#val_mod::encode);
-                let vl = quote!(::prost::encoding::#val_mod::encoded_len);
+                let ve = quote!(#prost_path::encoding::#val_mod::encode);
+                let vl = quote!(#prost_path::encoding::#val_mod::encoded_len);
                 quote! {
-                    ::prost::encoding::#module::encode(
+                    #prost_path::encoding::#module::encode(
                         #ke,
                         #kl,
                         #ve,
@@ -167,11 +163,11 @@ impl Field {
                 }
             }
             ValueTy::Message => quote! {
-                ::prost::encoding::#module::encode(
+                #prost_path::encoding::#module::encode(
                     #ke,
                     #kl,
-                    ::prost::encoding::message::encode,
-                    ::prost::encoding::message::encoded_len,
+                    #prost_path::encoding::message::encode,
+                    #prost_path::encoding::message::encoded_len,
                     #tag,
                     &#ident,
                     buf,
@@ -182,17 +178,17 @@ impl Field {
 
     /// Returns an expression which evaluates to the result of merging a decoded key value pair
     /// into the map.
-    pub fn merge(&self, ident: TokenStream) -> TokenStream {
+    pub fn merge(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         let key_mod = self.key_ty.module();
-        let km = quote!(::prost::encoding::#key_mod::merge);
+        let km = quote!(#prost_path::encoding::#key_mod::merge);
         let module = self.map_ty.module();
         match &self.value_ty {
             ValueTy::Scalar(scalar::Ty::Enumeration(ty)) => {
                 let default = quote!(#ty::default() as i32);
                 quote! {
-                    ::prost::encoding::#module::merge_with_default(
+                    #prost_path::encoding::#module::merge_with_default(
                         #km,
-                        ::prost::encoding::int32::merge,
+                        #prost_path::encoding::int32::merge,
                         #default,
                         &mut #ident,
                         buf,
@@ -202,13 +198,13 @@ impl Field {
             }
             ValueTy::Scalar(value_ty) => {
                 let val_mod = value_ty.module();
-                let vm = quote!(::prost::encoding::#val_mod::merge);
-                quote!(::prost::encoding::#module::merge(#km, #vm, &mut #ident, buf, ctx))
+                let vm = quote!(#prost_path::encoding::#val_mod::merge);
+                quote!(#prost_path::encoding::#module::merge(#km, #vm, &mut #ident, buf, ctx))
             }
             ValueTy::Message => quote! {
-                ::prost::encoding::#module::merge(
+                #prost_path::encoding::#module::merge(
                     #km,
-                    ::prost::encoding::message::merge,
+                    #prost_path::encoding::message::merge,
                     &mut #ident,
                     buf,
                     ctx,
@@ -218,18 +214,18 @@ impl Field {
     }
 
     /// Returns an expression which evaluates to the encoded length of the map.
-    pub fn encoded_len(&self, ident: TokenStream) -> TokenStream {
+    pub fn encoded_len(&self, prost_path: &Path, ident: TokenStream) -> TokenStream {
         let tag = self.tag;
         let key_mod = self.key_ty.module();
-        let kl = quote!(::prost::encoding::#key_mod::encoded_len);
+        let kl = quote!(#prost_path::encoding::#key_mod::encoded_len);
         let module = self.map_ty.module();
         match &self.value_ty {
             ValueTy::Scalar(scalar::Ty::Enumeration(ty)) => {
                 let default = quote!(#ty::default() as i32);
                 quote! {
-                    ::prost::encoding::#module::encoded_len_with_default(
+                    #prost_path::encoding::#module::encoded_len_with_default(
                         #kl,
-                        ::prost::encoding::int32::encoded_len,
+                        #prost_path::encoding::int32::encoded_len,
                         &(#default),
                         #tag,
                         &#ident,
@@ -238,13 +234,13 @@ impl Field {
             }
             ValueTy::Scalar(value_ty) => {
                 let val_mod = value_ty.module();
-                let vl = quote!(::prost::encoding::#val_mod::encoded_len);
-                quote!(::prost::encoding::#module::encoded_len(#kl, #vl, #tag, &#ident))
+                let vl = quote!(#prost_path::encoding::#val_mod::encoded_len);
+                quote!(#prost_path::encoding::#module::encoded_len(#kl, #vl, #tag, &#ident))
             }
             ValueTy::Message => quote! {
-                ::prost::encoding::#module::encoded_len(
+                #prost_path::encoding::#module::encoded_len(
                     #kl,
-                    ::prost::encoding::message::encoded_len,
+                    #prost_path::encoding::message::encoded_len,
                     #tag,
                     &#ident,
                 )
@@ -257,13 +253,13 @@ impl Field {
     }
 
     /// Returns methods to embed in the message.
-    pub fn methods(&self, ident: &TokenStream) -> Option<TokenStream> {
+    pub fn methods(&self, prost_path: &Path, ident: &TokenStream) -> Option<TokenStream> {
         if let ValueTy::Scalar(scalar::Ty::Enumeration(ty)) = &self.value_ty {
-            let key_ty = self.key_ty.rust_type();
+            let key_ty = self.key_ty.rust_type(prost_path);
             let key_ref_ty = self.key_ty.rust_ref_type();
 
-            let get = Ident::new(&format!("get_{}", ident), Span::call_site());
-            let insert = Ident::new(&format!("insert_{}", ident), Span::call_site());
+            let get = Ident::new(&format!("get_{ident}"), Span::call_site());
+            let insert = Ident::new(&format!("insert_{ident}"), Span::call_site());
             let take_ref = if self.key_ty.is_numeric() {
                 quote!(&)
             } else {
@@ -271,19 +267,24 @@ impl Field {
             };
 
             let get_doc = format!(
-                "Returns the enum value for the corresponding key in `{}`, \
-                 or `None` if the entry does not exist or it is not a valid enum value.",
-                ident,
+                "Returns the enum value for the corresponding key in `{ident}`, \
+                 or `None` if the entry does not exist or it is not a valid enum value."
             );
-            let insert_doc = format!("Inserts a key value pair into `{}`.", ident);
+            let insert_doc = format!("Inserts a key value pair into `{ident}`.");
             Some(quote! {
                 #[doc=#get_doc]
                 pub fn #get(&self, key: #key_ref_ty) -> ::core::option::Option<#ty> {
-                    self.#ident.get(#take_ref key).cloned().and_then(#ty::from_i32)
+                    self.#ident.get(#take_ref key).cloned().and_then(|x| {
+                        let result: ::core::result::Result<#ty, _> = ::core::convert::TryFrom::try_from(x);
+                        result.ok()
+                    })
                 }
                 #[doc=#insert_doc]
                 pub fn #insert(&mut self, key: #key_ty, value: #ty) -> ::core::option::Option<#ty> {
-                    self.#ident.insert(key, value as i32).and_then(#ty::from_i32)
+                    self.#ident.insert(key, value as i32).and_then(|x| {
+                        let result: ::core::result::Result<#ty, _> = ::core::convert::TryFrom::try_from(x);
+                        result.ok()
+                    })
                 }
             })
         } else {
@@ -295,16 +296,16 @@ impl Field {
     ///
     /// The Debug tries to convert any enumerations met into the variants if possible, instead of
     /// outputting the raw numbers.
-    pub fn debug(&self, wrapper_name: TokenStream) -> TokenStream {
+    pub fn debug(&self, prost_path: &Path, wrapper_name: TokenStream) -> TokenStream {
         let type_name = match self.map_ty {
             MapTy::HashMap => Ident::new("HashMap", Span::call_site()),
             MapTy::BTreeMap => Ident::new("BTreeMap", Span::call_site()),
         };
 
         // A fake field for generating the debug wrapper
-        let key_wrapper = fake_scalar(self.key_ty.clone()).debug(quote!(KeyWrapper));
-        let key = self.key_ty.rust_type();
-        let value_wrapper = self.value_ty.debug();
+        let key_wrapper = fake_scalar(self.key_ty.clone()).debug(prost_path, quote!(KeyWrapper));
+        let key = self.key_ty.rust_type(prost_path);
+        let value_wrapper = self.value_ty.debug(prost_path);
         let libname = self.map_ty.lib();
         let fmt = quote! {
             fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
@@ -330,7 +331,7 @@ impl Field {
                     };
                 }
 
-                let value = ty.rust_type();
+                let value = ty.rust_type(prost_path);
                 quote! {
                     struct #wrapper_name<'a>(&'a ::#libname::collections::#type_name<#key, #value>);
                     impl<'a> ::core::fmt::Debug for #wrapper_name<'a> {
@@ -366,7 +367,7 @@ fn key_ty_from_str(s: &str) -> Result<scalar::Ty, Error> {
         | scalar::Ty::Sfixed64
         | scalar::Ty::Bool
         | scalar::Ty::String => Ok(ty),
-        _ => bail!("invalid map key type: {}", s),
+        _ => bail!("invalid map key type: {s}"),
     }
 }
 
@@ -384,7 +385,7 @@ impl ValueTy {
         } else if s.trim() == "message" {
             Ok(ValueTy::Message)
         } else {
-            bail!("invalid map value type: {}", s);
+            bail!("invalid map value type: {s}");
         }
     }
 
@@ -392,9 +393,9 @@ impl ValueTy {
     ///
     /// If the contained value is enumeration, it tries to convert it to the variant. If not, it
     /// just forwards the implementation.
-    fn debug(&self) -> TokenStream {
+    fn debug(&self, prost_path: &Path) -> TokenStream {
         match self {
-            ValueTy::Scalar(ty) => fake_scalar(ty.clone()).debug(quote!(ValueWrapper)),
+            ValueTy::Scalar(ty) => fake_scalar(ty.clone()).debug(prost_path, quote!(ValueWrapper)),
             ValueTy::Message => quote!(
                 fn ValueWrapper<T>(v: T) -> T {
                     v

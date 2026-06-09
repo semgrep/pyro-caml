@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = CheckerboardReport)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "CheckerboardReport")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `CheckerboardReport` dictionary."]
     #[doc = ""]
@@ -52,6 +52,16 @@ extern "C" {
     #[doc = "*This API requires the following crate features to be activated: `CheckerboardReport`*"]
     #[wasm_bindgen(method, setter = "timestamp")]
     pub fn set_timestamp(this: &CheckerboardReport, val: f64);
+    #[doc = "Change the `timestamp` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `CheckerboardReport`*"]
+    #[wasm_bindgen(method, setter = "timestamp")]
+    pub fn set_timestamp_u32(this: &CheckerboardReport, val: u32);
+    #[doc = "Change the `timestamp` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `CheckerboardReport`*"]
+    #[wasm_bindgen(method, setter = "timestamp")]
+    pub fn set_timestamp_f64(this: &CheckerboardReport, val: f64);
 }
 impl CheckerboardReport {
     #[doc = "Construct a new `CheckerboardReport`."]

@@ -11,8 +11,9 @@
 
 [package]
 edition = "2021"
+rust-version = "1.77"
 name = "rustc-hash"
-version = "2.1.1"
+version = "2.1.2"
 authors = ["The Rust Project Developers"]
 build = false
 autolib = false

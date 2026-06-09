@@ -5,7 +5,11 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = XRHand , typescript_type = "XRHand")]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "XRHand",
+        typescript_type = "XRHand"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `XrHand` class."]
     #[doc = ""]
@@ -17,7 +21,7 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     pub type XrHand;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (structural , method , getter , js_class = "XRHand" , js_name = size)]
+    #[wasm_bindgen(method, getter, js_class = "XRHand", js_name = "size")]
     #[doc = "Getter for the `size` field of this object."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRHand/size)"]
@@ -28,30 +32,8 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     pub fn size(this: &XrHand) -> u32;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (method , structural , js_class = "XRHand" , js_name = entries)]
-    #[doc = "The `entries()` method."]
-    #[doc = ""]
-    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRHand/entries)"]
-    #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `XrHand`*"]
-    #[doc = ""]
-    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
-    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn entries(this: &XrHand) -> ::js_sys::Iterator;
-    #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (catch , method , structural , js_class = "XRHand" , js_name = forEach)]
-    #[doc = "The `forEach()` method."]
-    #[doc = ""]
-    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRHand/forEach)"]
-    #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `XrHand`*"]
-    #[doc = ""]
-    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
-    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn for_each(this: &XrHand, callback: &::js_sys::Function) -> Result<(), JsValue>;
-    #[cfg(web_sys_unstable_apis)]
     #[cfg(all(feature = "XrHandJoint", feature = "XrJointSpace",))]
-    # [wasm_bindgen (method , structural , js_class = "XRHand" , js_name = get)]
+    #[wasm_bindgen(method, js_class = "XRHand")]
     #[doc = "The `get()` method."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRHand/get)"]
@@ -62,7 +44,7 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     pub fn get(this: &XrHand, key: XrHandJoint) -> XrJointSpace;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (method , structural , js_class = "XRHand" , js_name = keys)]
+    #[wasm_bindgen(method, js_class = "XRHand")]
     #[doc = "The `keys()` method."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRHand/keys)"]
@@ -71,16 +53,5 @@ extern "C" {
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn keys(this: &XrHand) -> ::js_sys::Iterator;
-    #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (method , structural , js_class = "XRHand" , js_name = values)]
-    #[doc = "The `values()` method."]
-    #[doc = ""]
-    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRHand/values)"]
-    #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `XrHand`*"]
-    #[doc = ""]
-    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
-    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
-    pub fn values(this: &XrHand) -> ::js_sys::Iterator;
+    pub fn keys(this: &XrHand) -> ::js_sys::Iterator<::js_sys::JsString>;
 }

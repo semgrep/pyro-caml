@@ -79,7 +79,7 @@ impl ServerName<'_> {
 }
 
 impl fmt::Debug for ServerName<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DnsName(d) => f.debug_tuple("DnsName").field(&d.as_ref()).finish(),
             Self::IpAddress(i) => f.debug_tuple("IpAddress").field(i).finish(),
@@ -301,11 +301,12 @@ impl fmt::Debug for DnsNameInner<'_> {
 
 /// The provided input could not be parsed because
 /// it is not a syntactically-valid DNS Name.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug)]
 pub struct InvalidDnsNameError;
 
 impl fmt::Display for InvalidDnsNameError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("invalid dns name")
     }
 }
@@ -382,6 +383,7 @@ const fn validate(input: &[u8]) -> Result<(), InvalidDnsNameError> {
 /// Note: because we intend to replace this type with `core::net::IpAddr` as soon as it is
 /// stabilized, the identity of this type should not be considered semver-stable. However, the
 /// attached interfaces are stable; they form a subset of those provided by `core::net::IpAddr`.
+#[allow(clippy::exhaustive_enums)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IpAddr {
     /// An Ipv4 address.
@@ -776,8 +778,8 @@ use parser::{AddrKind, Parser};
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AddrParseError(AddrKind);
 
-impl core::fmt::Display for AddrParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+impl fmt::Display for AddrParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self.0 {
             AddrKind::Ipv4 => "invalid IPv4 address syntax",
             AddrKind::Ipv6 => "invalid IPv6 address syntax",
@@ -900,7 +902,7 @@ mod tests {
         #[cfg(feature = "std")]
         {
             use std::collections::HashSet;
-            let mut h = HashSet::<DnsName>::new();
+            let mut h = HashSet::<DnsName<'_>>::new();
             h.insert(example);
         }
     }

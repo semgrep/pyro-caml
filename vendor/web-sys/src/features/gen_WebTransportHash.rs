@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = WebTransportHash)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "WebTransportHash")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `WebTransportHash` dictionary."]
     #[doc = ""]
@@ -50,6 +50,27 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     #[wasm_bindgen(method, setter = "value")]
     pub fn set_value(this: &WebTransportHash, val: &::js_sys::Object);
+    #[cfg(web_sys_unstable_apis)]
+    #[doc = "Change the `value` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `WebTransportHash`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "The `val` slice must outlive any use of the dictionary on the JavaScript side. wasm-bindgen passes a raw view into wasm linear memory — if the underlying data is freed or moved before JS is done reading the field, the behaviour is undefined. Prefer the `_array` variant (takes `&Uint8Array`) for a safe alternative that copies the data."]
+    #[wasm_bindgen(method, setter = "value")]
+    pub unsafe fn set_value_u8_slice(this: &WebTransportHash, val: &mut [u8]);
+    #[cfg(web_sys_unstable_apis)]
+    #[doc = "Change the `value` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `WebTransportHash`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    #[wasm_bindgen(method, setter = "value")]
+    pub fn set_value_u8_array(this: &WebTransportHash, val: &::js_sys::Uint8Array);
 }
 #[cfg(web_sys_unstable_apis)]
 impl WebTransportHash {

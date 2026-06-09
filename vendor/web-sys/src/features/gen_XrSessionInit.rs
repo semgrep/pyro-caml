@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = XRSessionInit)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "XRSessionInit")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `XrSessionInit` dictionary."]
     #[doc = ""]
@@ -31,7 +31,7 @@ extern "C" {
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     #[wasm_bindgen(method, setter = "optionalFeatures")]
-    pub fn set_optional_features(this: &XrSessionInit, val: &::wasm_bindgen::JsValue);
+    pub fn set_optional_features(this: &XrSessionInit, val: &[::wasm_bindgen::JsValue]);
     #[cfg(web_sys_unstable_apis)]
     #[doc = "Get the `requiredFeatures` field of this object."]
     #[doc = ""]
@@ -49,7 +49,7 @@ extern "C" {
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     #[wasm_bindgen(method, setter = "requiredFeatures")]
-    pub fn set_required_features(this: &XrSessionInit, val: &::wasm_bindgen::JsValue);
+    pub fn set_required_features(this: &XrSessionInit, val: &[::wasm_bindgen::JsValue]);
 }
 #[cfg(web_sys_unstable_apis)]
 impl XrSessionInit {
@@ -66,13 +66,13 @@ impl XrSessionInit {
     }
     #[cfg(web_sys_unstable_apis)]
     #[deprecated = "Use `set_optional_features()` instead."]
-    pub fn optional_features(&mut self, val: &::wasm_bindgen::JsValue) -> &mut Self {
+    pub fn optional_features(&mut self, val: &[::wasm_bindgen::JsValue]) -> &mut Self {
         self.set_optional_features(val);
         self
     }
     #[cfg(web_sys_unstable_apis)]
     #[deprecated = "Use `set_required_features()` instead."]
-    pub fn required_features(&mut self, val: &::wasm_bindgen::JsValue) -> &mut Self {
+    pub fn required_features(&mut self, val: &[::wasm_bindgen::JsValue]) -> &mut Self {
         self.set_required_features(val);
         self
     }
