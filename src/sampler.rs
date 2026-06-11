@@ -100,7 +100,7 @@ impl Sampler {
     /// buffer per backend. This makes it possible to support multiple
     /// different backends simultaneously (cpu, alloc_space, inuse_space, etc.)
     ///
-    /// We do the data transformation for each backend here because we sometimes
+    /// We do the processing for each backend here because we sometimes
     /// want to pass in the sample time such as in cpu usage
     pub fn start(
         config: SamplerConfig,
