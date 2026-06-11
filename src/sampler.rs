@@ -99,6 +99,9 @@ impl Sampler {
     /// It drains the OCaml event buffer and fans each sample out into one
     /// buffer per backend. This makes it possible to support multiple
     /// different backends simultaneously (cpu, alloc_space, inuse_space, etc.)
+    ///
+    /// We do the data transformation for each backend here because we sometimes
+    /// want to pass in the sample time such as in cpu usage
     pub fn start(
         config: SamplerConfig,
         backend_config: Arc<Mutex<BackendConfig>>,
