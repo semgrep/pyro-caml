@@ -69,7 +69,7 @@ impl From<CamlStackFrame> for StackFrame {
 #[derive(ocaml::ToValue, ocaml::FromValue)]
 pub struct CamlStackTrace {
     frames: LinkedList<CamlStackFrame>,
-    thread_id: usize,
+    pub thread_id: usize,
     thread_name: String,
 }
 
@@ -94,34 +94,34 @@ impl CamlStackTrace {
 pub type Cursor = ocaml::Value;
 
 ocaml::import! {
-  fn read_poll_ml(cursor:Cursor, interval:ocaml::Float, max_delta:ocaml::Float) -> ocaml::List<ocaml::Value>;
+  fn read_poll_ml(cursor:Cursor) -> ocaml::List<ocaml::Value>;
   fn create_cursor_ml(path:String, pid:ocaml::Int) -> Cursor;
 }
 
-pub fn read_poll(
-    gc: &Runtime,
-    cursor: Cursor,
-    interval: f64,
-    max_delta: f64,
-) -> Result<Vec<CamlStackTrace>, CamlIntfError> {
+/// A single profiling sample. NOTE: field order is part of the FFI contract.
+/// ocaml-rs decodes this struct positionally from the OCaml `sample_point`
+/// record `{ time : float; stack_trace : Stack_trace.t }` in
+/// lib/Pyro_caml_instruments.ml, so these fields must stay in that same order
+/// (time, stack_trace). Reordering either side without the other
+/// silently mis-decodes.
+#[derive(ocaml::ToValue, ocaml::FromValue)]
+pub struct CamlSamplePoint {
+    pub time: f64,
+    pub stack_trace: CamlStackTrace,
+}
+
+pub fn read_poll(gc: &Runtime, cursor: Cursor) -> Result<Vec<CamlSamplePoint>, CamlIntfError> {
     // # Safety
     //
     // it is unclear why this function is unsafe from the ocaml-rs docs
     // but we assume the caller must ensure the gc is valid, and we convert the
     // path and int for the caller, so there is no risk they coerced a bad
     // value into an ocaml::Value
-    Ok(unsafe {
-        read_poll_ml(
-            gc,
-            cursor,
-            interval as ocaml::Float,
-            max_delta as ocaml::Float,
-        )
-    }?
-    .into_vec()
-    .into_iter()
-    .map(CamlStackTrace::from_value)
-    .collect())
+    Ok(unsafe { read_poll_ml(gc, cursor) }?
+        .into_vec()
+        .into_iter()
+        .map(<CamlSamplePoint>::from_value)
+        .collect())
 }
 
 pub fn create_cursor(gc: &Runtime, path: &Path, pid: u32) -> Cursor {

@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::HashSet,
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -7,6 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use ocaml::Runtime;
@@ -34,6 +36,10 @@ pub struct SamplerConfig {
     pub max_delta: u32,
     pub pid: u32,
     pub event_directory: PathBuf,
+}
+
+pub struct Buffers {
+    pub cpu_buffer: Arc<Mutex<StackBuffer>>,
 }
 
 impl SamplerConfig {
@@ -77,6 +83,12 @@ impl Drop for AliveGuard {
     }
 }
 
+#[derive(Clone)]
+struct SamplePoint {
+    time: f64,
+    stack_trace: StackTrace,
+}
+
 pub struct Sampler {
     running: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -92,10 +104,11 @@ impl Sampler {
         backend_config: Arc<Mutex<BackendConfig>>,
         tagset: Arc<Mutex<ThreadTagsSet>>,
         alive: Arc<AtomicBool>,
-        buffers: Vec<Arc<Mutex<StackBuffer>>>,
+        buffers: Buffers,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let thread_running = running.clone();
+        let Buffers { cpu_buffer } = buffers;
         alive.store(true, Ordering::Relaxed);
 
         let empty_frame = StackFrame {
@@ -114,6 +127,7 @@ impl Sampler {
             None,
             vec![empty_frame],
         );
+
         let thread = thread::spawn(move || {
             let _alive_guard = AliveGuard(alive);
             log::debug!(target:LOG_TAG, "starting sampler thread");
@@ -121,7 +135,11 @@ impl Sampler {
                 log::trace!(target:LOG_TAG, "acquiring backend config and cursor");
                 let cursor = config.acquire_cursor();
                 log::trace!(target:LOG_TAG, "sampling...");
-                let mut stack_frames: Vec<StackTrace> = {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock before unix epoch")
+                    .as_secs_f64();
+                let sample_points: Vec<SamplePoint> = {
                     let backend_config = backend_config
                         .lock()
                         .expect("Could not take backend config lock"); // we only have one sampler thread and one reporting thread so this should never fail unless something is seriously wrong
@@ -131,8 +149,6 @@ impl Sampler {
                         ocaml_intf::read_poll(
                             gc,
                             cursor,
-                            config.sample_interval(),
-                            config.max_delta(),
                         )
                     })
                     .unwrap_or_else(|e| {
@@ -140,31 +156,24 @@ impl Sampler {
                         vec![]
                     })
                     .into_iter()
-                    .map(|st| st.into_stack_trace(backend_config.deref(), config.pid))
+                    .map(|csp| SamplePoint {
+                        time: csp.time,
+                        stack_trace: csp.stack_trace.into_stack_trace(backend_config.deref(), config.pid),
+                    })
                     .collect()
                 };
 
                 log::trace!(target:LOG_TAG, "done sampling");
 
-                if stack_frames.is_empty() {
-                    // push an empty stack_trace to indicate idle
-                    log::trace!(target:LOG_TAG, "no stack frames found, pushing empty stack trace");
-                    stack_frames.push(empty_stack_trace.clone());
-                }
+                Self::record_cpu_buffer(
+                    sample_points,
+                    now,
+                    cpu_buffer.clone(),
+                    tagset.clone(),
+                    &empty_stack_trace,
+                    &config,
+                );
 
-                log::trace!(target:LOG_TAG, "recording stack frames");
-                for st in stack_frames.into_iter() {
-                    let stack_trace =
-                        st.add_tag_rules(&tagset.lock().expect("Failed to lock ruleset"));
-                    for buffer in &buffers {
-                        buffer
-                            .lock()
-                            .expect("Failed to lock buffer") // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
-                            .record(stack_trace.clone())
-                            .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
-                    }
-                }
-                log::trace!(target:LOG_TAG, "recorded stack trace");
                 log::trace!(target:LOG_TAG, "sleeping for {} ms", 1000 / config.sample_rate);
 
                 thread::sleep(std::time::Duration::from_millis(
@@ -178,6 +187,44 @@ impl Sampler {
             running,
             thread: Some(thread),
         }
+    }
+
+    fn record_cpu_buffer(
+        mut sample_points: Vec<SamplePoint>,
+        now: f64,
+        cpu_buffer: Arc<Mutex<StackBuffer>>,
+        tagset: Arc<Mutex<ThreadTagsSet>>,
+        empty_stack_trace: &StackTrace,
+        config: &SamplerConfig,
+    ) {
+        log::trace!(target:LOG_TAG, "processing stack frames for cpu buffer");
+        let max_age = f64::min(config.sample_interval(), config.max_delta());
+
+        sample_points.retain(|sp| (now - sp.time).abs() < max_age);
+        sample_points.sort_by(|a, b| (now - a.time).abs().total_cmp(&(now - b.time).abs()));
+
+        let mut seen = HashSet::new();
+        sample_points.retain(|sp| seen.insert(sp.stack_trace.thread_id.clone()));
+
+        let mut stack_frames: Vec<StackTrace> =
+            sample_points.into_iter().map(|sp| sp.stack_trace).collect();
+
+        if stack_frames.is_empty() {
+            // push an empty stack_trace to indicate idle
+            log::trace!(target:LOG_TAG, "no stack frames found, pushing empty stack trace");
+            stack_frames.push(empty_stack_trace.clone());
+        }
+
+        log::trace!(target:LOG_TAG, "recording stack frames for cpu buffer");
+        let tagset = tagset.lock().expect("Failed to lock ruleset");
+        let mut cpu_buffer = cpu_buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
+        for st in stack_frames.into_iter() {
+            let stack_trace = st.add_tag_rules(&tagset);
+            cpu_buffer
+                .record(stack_trace)
+                .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
+        }
+        log::trace!(target:LOG_TAG, "recorded stack trace for cpu buffer");
     }
 
     pub fn stop(self) -> Result<()> {

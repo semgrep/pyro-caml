@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     backend::CamlSpy,
-    sampler::{Sampler, SamplerConfig},
+    sampler::{Buffers, Sampler, SamplerConfig},
 };
 use clap::Parser;
 use nix::{
@@ -202,7 +202,9 @@ fn main() {
     // NB: cpu_buffer is shared (Arc) between the sampler (writer, via `buffers`)
     // and the CamlSpy backend (reader, below).
     let cpu_buffer = Arc::new(Mutex::new(StackBuffer::default()));
-    let buffers = vec![cpu_buffer.clone()];
+    let buffers = Buffers {
+        cpu_buffer: cpu_buffer.clone(),
+    };
 
     let sampler = Sampler::start(
         sampler_config.clone(),
