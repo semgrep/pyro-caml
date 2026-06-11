@@ -3,7 +3,8 @@ use std::{collections::LinkedList, path::Path};
 use nix::libc::pthread_t;
 use ocaml::{FromValue, Runtime};
 use pyroscope::{
-    PyroscopeError, ThreadId, backend::{BackendConfig, StackFrame, StackTrace}
+    PyroscopeError, ThreadId,
+    backend::{BackendConfig, StackFrame, StackTrace},
 };
 
 #[derive(Debug, Clone)]
@@ -109,13 +110,18 @@ pub fn read_poll(
     // but we assume the caller must ensure the gc is valid, and we convert the
     // path and int for the caller, so there is no risk they coerced a bad
     // value into an ocaml::Value
-    Ok(
-        unsafe { read_poll_ml(gc, cursor, interval as ocaml::Float, max_delta as ocaml::Float) }?
-            .into_vec()
-            .into_iter()
-            .map(CamlStackTrace::from_value)
-            .collect(),
-    )
+    Ok(unsafe {
+        read_poll_ml(
+            gc,
+            cursor,
+            interval as ocaml::Float,
+            max_delta as ocaml::Float,
+        )
+    }?
+    .into_vec()
+    .into_iter()
+    .map(CamlStackTrace::from_value)
+    .collect())
 }
 
 pub fn create_cursor(gc: &Runtime, path: &Path, pid: u32) -> Cursor {

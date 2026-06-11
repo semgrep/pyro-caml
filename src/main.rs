@@ -1,19 +1,28 @@
-use std::{path::PathBuf, thread, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex, atomic::AtomicBool},
+    thread,
+    time::Duration,
+};
 
-use crate::backend::{CamlSpy, CamlSpyConfig};
+use crate::{
+    backend::CamlSpy,
+    sampler::{Sampler, SamplerConfig},
+};
 use clap::Parser;
 use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
 };
 use pyroscope::{
-    backend::{BackendConfig, BackendImpl, BackendUninitialized},
+    backend::{BackendConfig, BackendImpl, BackendUninitialized, StackBuffer, ThreadTagsSet},
     pyroscope::PyroscopeAgentBuilder,
 };
 use tempdir::TempDir;
 
 mod backend;
 mod ocaml_intf;
+mod sampler;
 
 const OCAML_RUNTIME_EVENTS_START: &str = "OCAML_RUNTIME_EVENTS_START";
 const OCAML_RUNTIME_EVENTS_DIR: &str = "OCAML_RUNTIME_EVENTS_DIR";
@@ -52,7 +61,11 @@ struct Cli {
 
     /// Max difference between sample time and sample, in microseconds,
     /// defaults to sample interval
-    #[arg(long = "max_delta", env = "PYRO_CAML_MAX_DELTA", default_value_t = 10_000)]
+    #[arg(
+        long = "max_delta",
+        env = "PYRO_CAML_MAX_DELTA",
+        default_value_t = 10_000
+    )]
     max_delta: u32,
 
     /// Tags to attach to the profiles, in the format key1=value1,key2=value2
@@ -103,9 +116,16 @@ fn make_agent_builder(
     basic_auth_username: Option<&str>,
     basic_auth_password: Option<&str>,
     sample_rate: u32,
-    backend: BackendImpl<BackendUninitialized>
+    backend: BackendImpl<BackendUninitialized>,
 ) -> PyroscopeAgentBuilder {
-    let mut agent_builder = PyroscopeAgentBuilder::new(server_address, service_name, sample_rate, "camlspy", env!("CARGO_PKG_VERSION"), backend);
+    let mut agent_builder = PyroscopeAgentBuilder::new(
+        server_address,
+        service_name,
+        sample_rate,
+        "camlspy",
+        env!("CARGO_PKG_VERSION"),
+        backend,
+    );
     agent_builder = agent_builder
         // TODO: add some tags about pyro caml's version
         .tags(tags);
@@ -148,13 +168,6 @@ fn main() {
     let keep_events_file = cli.keep_events_file;
 
     log::info!(target: LOG_TAG, "Sending profiles to Pyroscope server at: {}", cli.server_address);
-
-    let backend_config = BackendConfig {
-        report_thread_id: true,
-        report_thread_name: true,
-        // do we really care about this?
-        report_pid: true,
-    };
     log::info!(target: LOG_TAG, "Starting child process: {:?} {:?}", bin, args.clone());
     // fork and call bin_path with args
     let mut child = std::process::Command::new(bin)
@@ -166,15 +179,35 @@ fn main() {
     let child_id = child.id();
     // wait for child process to start
 
-    let camlspy_config = CamlSpyConfig {
+    let sampler_config = SamplerConfig {
         event_directory,
         pid: child.id(),
         sample_rate,
         max_delta,
     };
-    let backend = BackendImpl::new(
-        Box::new(CamlSpy::new(camlspy_config.clone(), backend_config)),
+    let tagset = Arc::new(Mutex::new(ThreadTagsSet::default()));
+
+    let backend_config = Arc::new(Mutex::new(BackendConfig {
+        report_thread_id: true,
+        report_thread_name: true,
+        // do we really care about this?
+        report_pid: true,
+    }));
+
+    let alive = Arc::new(AtomicBool::new(false));
+
+    let cpu_buffer = Arc::new(Mutex::new(StackBuffer::default()));
+    let buffers = vec![cpu_buffer.clone()];
+
+    let sampler = Sampler::start(
+        sampler_config.clone(),
+        backend_config,
+        tagset.clone(),
+        alive.clone(),
+        buffers,
     );
+
+    let backend = BackendImpl::new(Box::new(CamlSpy::new(cpu_buffer, tagset, alive)));
 
     let agent_builder = make_agent_builder(
         &cli.server_address,
@@ -183,7 +216,7 @@ fn main() {
         cli.basic_auth_username.as_deref(),
         cli.basic_auth_password.as_deref(),
         cli.sample_rate,
-        backend
+        backend,
     );
 
     let agent = agent_builder.build().unwrap();
@@ -203,8 +236,8 @@ fn main() {
         false => {
             log::error!(target: LOG_TAG, "Process exited with exit code: {:?}", ecode);
             if !keep_events_file {
-                log::info!(target: LOG_TAG, "Cleaning up events file: {:?}", camlspy_config.get_event_file_path());
-                std::fs::remove_file(camlspy_config.get_event_file_path()).unwrap_or_else(
+                log::info!(target: LOG_TAG, "Cleaning up events file: {:?}", sampler_config.get_event_file_path());
+                std::fs::remove_file(sampler_config.get_event_file_path()).unwrap_or_else(
                     |err| log::error!(target: LOG_TAG, "Failed to remove events file: {:?}", err),
                 );
             }
@@ -214,6 +247,7 @@ fn main() {
     // sleep for 1 seconds to allow the agent to flush data
     thread::sleep(Duration::from_secs(1));
     agent_running.stop().unwrap();
+    sampler.stop().unwrap();
     // exit with the same code as the child process
     std::process::exit(ecode.code().unwrap_or_default());
 }
