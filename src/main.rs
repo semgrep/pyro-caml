@@ -196,6 +196,11 @@ fn main() {
 
     let alive = Arc::new(AtomicBool::new(false));
 
+    // The sampler writes samples into these buffers; each backend owns one and
+    // drains it when reporting.
+    //
+    // NB: cpu_buffer is shared (Arc) between the sampler (writer, via `buffers`)
+    // and the CamlSpy backend (reader, below).
     let cpu_buffer = Arc::new(Mutex::new(StackBuffer::default()));
     let buffers = vec![cpu_buffer.clone()];
 
@@ -207,6 +212,7 @@ fn main() {
         buffers,
     );
 
+    // This is where we can add more backends and agents (alloc_space, inuse_space, etc.)
     let backend = BackendImpl::new(Box::new(CamlSpy::new(cpu_buffer, tagset, alive)));
 
     let agent_builder = make_agent_builder(

@@ -83,6 +83,10 @@ pub struct Sampler {
 }
 
 impl Sampler {
+    /// Sampler takes in buffers, each corresponding to a single backend.
+    /// It drains the OCaml event buffer and fans each sample out into one
+    /// buffer per backend. This makes it possible to support multiple
+    /// different backends simultaneously (cpu, alloc_space, inuse_space, etc.)
     pub fn start(
         config: SamplerConfig,
         backend_config: Arc<Mutex<BackendConfig>>,
