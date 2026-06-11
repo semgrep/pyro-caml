@@ -6,6 +6,7 @@ use std::{
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
@@ -15,6 +16,7 @@ use ocaml::Runtime;
 use pyroscope::{
     PyroscopeError,
     backend::{BackendConfig, StackBuffer, StackFrame, StackTrace, ThreadTagsSet},
+    encode::pprof::ProfilingType,
     error::Result,
 };
 
@@ -33,13 +35,23 @@ thread_local! {
 #[derive(Debug, Clone)]
 pub struct SamplerConfig {
     pub sample_rate: u32,
+    pub memprof_rate: f64,
     pub max_delta: u32,
     pub pid: u32,
     pub event_directory: PathBuf,
 }
 
-pub struct Buffers {
-    pub cpu_buffer: Arc<Mutex<StackBuffer>>,
+/// A [ProfilingType] paired with the [StackBuffer] the sampler writes into and
+/// the pyroscope agent drains. (Distinct from pyroscope's `Backend` trait, which
+/// `CamlSpy` in backend.rs implements.) This is the single source of truth for
+/// the set of profiles — the sampler iterates them to record, and `main`
+/// iterates the same set to build one agent per profile, so the buffer and its
+/// profiling type can never drift out of sync. Adding a profile means adding one
+/// [ProfilingType] to that list (plus its arm in [ProfileBuffer::record]).
+#[derive(Clone)]
+pub struct ProfileBuffer {
+    pub profiling_type: ProfilingType,
+    pub buffer: Arc<Mutex<StackBuffer>>,
 }
 
 impl SamplerConfig {
@@ -87,31 +99,44 @@ impl Drop for AliveGuard {
 struct SamplePoint {
     time: f64,
     stack_trace: StackTrace,
+    n_samples: usize,
+    size: usize,
+}
+
+/// A [SamplePoint] whose stack trace has already had thread-tag rules applied.
+/// Every backend records the same tagged traces, so tagging is done once per
+/// tick (see [Sampler::tag_samples]) rather than once per backend.
+struct TaggedSample {
+    time: f64,
+    stack_trace: StackTrace,
+    n_samples: usize,
+    size: usize,
 }
 
 pub struct Sampler {
     running: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+    /// The drain thread (owns the OCaml runtime + cursor; does only read_poll)
+    /// and the processing thread (tags + records; touches no OCaml).
+    threads: Vec<JoinHandle<()>>,
 }
 
 impl Sampler {
-    /// Sampler takes in buffers, each corresponding to a single backend.
-    /// It drains the OCaml event buffer and fans each sample out into one
-    /// buffer per backend. This makes it possible to support multiple
-    /// different backends simultaneously (cpu, alloc_space, inuse_space, etc.)
+    /// Sampler takes in a [ProfileBuffer] per profile type. It drains the OCaml
+    /// event buffer and fans each sample out into every profile's buffer. This
+    /// makes it possible to support multiple different profiles simultaneously
+    /// (cpu, alloc_space, inuse_space, etc.) — adding one is a single
+    /// [ProfileBuffer] entry.
     ///
-    /// We do the processing for each backend here because we sometimes
+    /// We do the processing for each profile here because we sometimes
     /// want to pass in the sample time such as in cpu usage
     pub fn start(
         config: SamplerConfig,
         backend_config: Arc<Mutex<BackendConfig>>,
         tagset: Arc<Mutex<ThreadTagsSet>>,
         alive: Arc<AtomicBool>,
-        buffers: Buffers,
+        profiles: Vec<ProfileBuffer>,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(true));
-        let thread_running = running.clone();
-        let Buffers { cpu_buffer } = buffers;
         alive.store(true, Ordering::Relaxed);
 
         let empty_frame = StackFrame {
@@ -131,127 +156,240 @@ impl Sampler {
             vec![empty_frame],
         );
 
-        let thread = thread::spawn(move || {
+        // The OCaml runtime is thread-local (see OCAML_GC above) and brittle if
+        // touched from more than one thread, so read_poll must live on a single
+        // dedicated thread. We therefore split the sampler in two:
+        //
+        //   drain thread      — owns the OCaml runtime + cursor and does only
+        //                       read_poll + decode, then hands the resolved
+        //                       samples off over a channel. Keeping it cheap is
+        //                       what lets the per-domain runtime_events rings be
+        //                       drained on a regular cadence so they don't
+        //                       overflow (a dropped event there is lost for good,
+        //                       and a lost dealloc would inflate inuse).
+        //   processing thread — owns no OCaml. It receives each poll's samples
+        //                       and does the heavier tag + record-into-every-
+        //                       profile work
+        //
+        // The channel moves buffering out of the fixed-size, lossy ring and into
+        // the (effectively unbounded) Rust heap
+        let (tx, rx) = mpsc::channel::<(f64, Vec<SamplePoint>)>();
+
+        let drain_running = running.clone();
+        let drain_config = config.clone();
+        let drain_backend_config = backend_config.clone();
+        let drain_thread = thread::spawn(move || {
+            // The drain thread is the irreplaceable one (it owns the OCaml
+            // runtime), so it carries the liveness guard: if it dies,
+            // CamlSpy::report sees `alive == false` and surfaces the error.
             let _alive_guard = AliveGuard(alive);
-            log::debug!(target:LOG_TAG, "starting sampler thread");
-            while thread_running.load(Ordering::Relaxed) {
-                log::trace!(target:LOG_TAG, "acquiring backend config and cursor");
-                let cursor = config.acquire_cursor();
-                log::trace!(target:LOG_TAG, "sampling...");
-                let (now, sample_points): (f64, Vec<SamplePoint>) = {
-                    let backend_config = backend_config
+            log::debug!(target:LOG_TAG, "starting sampler drain thread");
+            while drain_running.load(Ordering::Relaxed) {
+                let cursor = drain_config.acquire_cursor();
+                log::trace!(target:LOG_TAG, "draining ring...");
+                let output = OCAML_GC
+                    .with_borrow(|gc| ocaml_intf::read_poll(gc, cursor))
+                    .unwrap_or_else(|e| {
+                        log::error!(target:LOG_TAG, "Error reading from OCaml runtime: {:?}", e);
+                        // Fall back to the Rust clock so age-based filtering in
+                        // record_cpu still has a sane reference time.
+                        ocaml_intf::ReadPollOutput {
+                            now: SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .expect("system clock before unix epoch")
+                                .as_secs_f64(),
+                            sample_points: vec![],
+                        }
+                    });
+                let now: f64 = output.now;
+                let sample_points: Vec<SamplePoint> = {
+                    let backend_config = drain_backend_config
                         .lock()
-                        .expect("Could not take backend config lock"); // we only have one sampler thread and one reporting thread so this should never fail unless something is seriously wrong
-
-                    let output = OCAML_GC
-                        .with_borrow(|gc| {
-                            ocaml_intf::read_poll(
-                                gc,
-                                cursor,
-                            )
-                        })
-                        .unwrap_or_else(|e| {
-                            log::error!(target:LOG_TAG, "Error reading from OCaml runtime: {:?}", e);
-                            // Fall back to the Rust clock so age-based filtering in
-                            // record_cpu_buffer still has a sane reference time.
-                            ocaml_intf::ReadPollOutput {
-                                now: SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .expect("system clock before unix epoch")
-                                    .as_secs_f64(),
-                                sample_points: vec![],
-                            }
-                        });
-
-                    let sample_points = output
+                        .expect("Could not take backend config lock");
+                    output
                         .sample_points
                         .into_iter()
                         .map(|csp| SamplePoint {
                             time: csp.time,
                             stack_trace: csp
                                 .stack_trace
-                                .into_stack_trace(backend_config.deref(), config.pid),
+                                .into_stack_trace(backend_config.deref(), drain_config.pid),
+                            n_samples: usize::try_from(csp.n_samples).unwrap(),
+                            size: usize::try_from(csp.size).unwrap(),
                         })
-                        .collect();
-
-                    (output.now, sample_points)
+                        .collect()
                 };
 
-                log::trace!(target:LOG_TAG, "done sampling");
-
-                Self::record_cpu_buffer(
-                    sample_points,
-                    now,
-                    cpu_buffer.clone(),
-                    tagset.clone(),
-                    &empty_stack_trace,
-                    &config,
-                );
-
-                log::trace!(target:LOG_TAG, "sleeping for {} ms", 1000 / config.sample_rate);
+                if tx.send((now, sample_points)).is_err() {
+                    // Processing thread is gone; nothing left to drain for.
+                    break;
+                }
 
                 thread::sleep(std::time::Duration::from_millis(
-                    1000 / config.sample_rate as u64,
+                    1000 / drain_config.sample_rate as u64,
                 ));
             }
-            log::debug!(target:LOG_TAG, "sampler thread exiting")
+            log::debug!(target:LOG_TAG, "sampler drain thread exiting")
+        });
+
+        let processing_running = running.clone();
+        let processing_thread = thread::spawn(move || {
+            log::debug!(target:LOG_TAG, "starting sampler processing thread");
+            while processing_running.load(Ordering::Relaxed) {
+                // recv_timeout so we periodically re-check `running` even when
+                // the drain thread has gone quiet.
+                let (now, mut sample_points) =
+                    match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                        Ok(batch) => batch,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
+
+                if sample_points.is_empty() {
+                    log::trace!(target:LOG_TAG, "no stack frames found, pushing empty stack trace");
+                    sample_points.push(SamplePoint {
+                        time: now,
+                        stack_trace: empty_stack_trace.clone(),
+                        n_samples: 0,
+                        size: 0,
+                    });
+                }
+
+                // Tag once, then fan the tagged samples out to every profile.
+                let tagged = Self::tag_samples(sample_points, &tagset);
+                for profile in &profiles {
+                    profile.record(&tagged, now, &config);
+                }
+            }
+            log::debug!(target:LOG_TAG, "sampler processing thread exiting")
         });
 
         Sampler {
             running,
-            thread: Some(thread),
+            threads: vec![drain_thread, processing_thread],
         }
     }
 
-    fn record_cpu_buffer(
-        mut sample_points: Vec<SamplePoint>,
-        now: f64,
-        cpu_buffer: Arc<Mutex<StackBuffer>>,
-        tagset: Arc<Mutex<ThreadTagsSet>>,
-        empty_stack_trace: &StackTrace,
-        config: &SamplerConfig,
-    ) {
+    /// Apply thread-tag rules to every sample once, under a single tagset lock.
+    /// Every backend records the same tagged traces, so there is no reason to
+    /// run the (identical) rule matching, or take the tagset lock, per backend.
+    fn tag_samples(
+        sample_points: Vec<SamplePoint>,
+        tagset: &Mutex<ThreadTagsSet>,
+    ) -> Vec<TaggedSample> {
+        let tagset = tagset.lock().expect("Failed to lock ruleset");
+        sample_points
+            .into_iter()
+            .map(|sp| TaggedSample {
+                time: sp.time,
+                stack_trace: sp.stack_trace.add_tag_rules(&tagset),
+                n_samples: sp.n_samples,
+                size: sp.size,
+            })
+            .collect()
+    }
+
+    pub fn stop(self) -> Result<()> {
+        log::trace!(target:LOG_TAG, "Shutting down sampler threads");
+        self.running.store(false, Ordering::Relaxed);
+        for thread in self.threads {
+            thread.join().map_err(|e| {
+                PyroscopeError::new(
+                    format!("Sampler: Failed to join sampler thread: {:?}", e).as_str(),
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl ProfileBuffer {
+    pub fn new(profiling_type: ProfilingType) -> Self {
+        ProfileBuffer {
+            profiling_type,
+            buffer: Arc::new(Mutex::new(StackBuffer::default())),
+        }
+    }
+
+    /// Record this tick's already-tagged samples into this profile's buffer.
+    /// Each profile owns a separate buffer, so it clones the traces it records.
+    /// The match is exhaustive on purpose: adding a [ProfilingType] becomes a
+    /// compile error here rather than a silently-unrecorded profile.
+    fn record(&self, tagged: &[TaggedSample], now: f64, config: &SamplerConfig) {
+        match self.profiling_type {
+            ProfilingType::Cpu => self.record_cpu(tagged, now, config),
+            ProfilingType::AllocSpace => self.record_alloc_space(tagged, config),
+            ProfilingType::AllocObjects => self.record_alloc_objects(tagged, config),
+            ProfilingType::InuseSpace | ProfilingType::InuseObjects => {
+                unimplemented!("backend {:?} is not yet supported", self.profiling_type)
+            }
+        }
+    }
+
+    fn record_cpu(&self, tagged: &[TaggedSample], now: f64, config: &SamplerConfig) {
         log::trace!(target:LOG_TAG, "processing stack frames for cpu buffer");
         let max_age = f64::min(config.sample_interval(), config.max_delta());
 
-        sample_points.retain(|sp| (now - sp.time).abs() < max_age);
-        sample_points.sort_by(|a, b| (now - a.time).abs().total_cmp(&(now - b.time).abs()));
+        // Keep the sample closest to `now` for each thread, within the staleness
+        // window. We work over references and only clone the survivors, rather
+        // than the whole sample set.
+        let mut survivors: Vec<&TaggedSample> = tagged
+            .iter()
+            .filter(|s| (now - s.time).abs() < max_age)
+            .collect();
+        survivors.sort_by(|a, b| (now - a.time).abs().total_cmp(&(now - b.time).abs()));
 
         let mut seen = HashSet::new();
-        sample_points.retain(|sp| seen.insert(sp.stack_trace.thread_id.clone()));
-
-        let mut stack_frames: Vec<StackTrace> =
-            sample_points.into_iter().map(|sp| sp.stack_trace).collect();
-
-        if stack_frames.is_empty() {
-            // push an empty stack_trace to indicate idle
-            log::trace!(target:LOG_TAG, "no stack frames found, pushing empty stack trace");
-            stack_frames.push(empty_stack_trace.clone());
-        }
+        survivors.retain(|s| seen.insert(s.stack_trace.thread_id.clone()));
 
         log::trace!(target:LOG_TAG, "recording stack frames for cpu buffer");
-        let tagset = tagset.lock().expect("Failed to lock ruleset");
-        let mut cpu_buffer = cpu_buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
-        for st in stack_frames.into_iter() {
-            let stack_trace = st.add_tag_rules(&tagset);
-            cpu_buffer
-                .record(stack_trace)
+        let mut buffer = self.buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
+        for s in survivors {
+            buffer
+                .record(s.stack_trace.clone())
                 .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
         }
         log::trace!(target:LOG_TAG, "recorded stack trace for cpu buffer");
     }
 
-    pub fn stop(self) -> Result<()> {
-        log::trace!(target:LOG_TAG, "Shutting down sampler thread");
-        self.running.store(false, Ordering::Relaxed);
-        self.thread
-            .ok_or_else(|| PyroscopeError::new("Sampler: Failed to unwrap sampler thread"))?
-            .join()
-            .map_err(|e| {
-                PyroscopeError::new(
-                    format!("Sampler: Failed to join sampler thread: {:?}", e).as_str(),
-                )
-            })?;
-        Ok(())
+    fn record_alloc_space(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
+        log::trace!(target:LOG_TAG, "recording stack frames for alloc_space buffer");
+        // memprof reports n_samples ~ Poisson(memprof_rate * size_in_words) per
+        // allocation, so n_samples / memprof_rate is an unbiased estimate of the
+        // allocation size in *words*. The profile type is alloc_space:bytes, so
+        // we convert words to bytes with the native word size (OCaml's word is
+        // the native pointer width, == size_of::<usize>(): 8 on 64-bit).
+        let bytes_per_word = size_of::<usize>() as f64;
+        let scale = bytes_per_word / config.memprof_rate;
+        let mut buffer = self.buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
+        for s in tagged {
+            let scaled_count = (s.n_samples as f64 * scale).round() as usize;
+            buffer
+                .record_with_count(s.stack_trace.clone(), scaled_count)
+                .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
+        }
+        log::trace!(target:LOG_TAG, "recorded stack trace for alloc_space buffer");
+    }
+
+    fn record_alloc_objects(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
+        log::trace!(target:LOG_TAG, "recording stack frames for alloc_objects buffer");
+        let mut buffer = self.buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
+        for s in tagged {
+            if s.size == 0 {
+                continue;
+            }
+            // We adjust for the fact that larger objects are more likely to be sampled.
+            // size + 1 is because the size given to us by memprof excludes the header,
+            // even though the header can be sampled.
+            let scaled_count = (s.n_samples as f64 / (((s.size + 1) as f64) * config.memprof_rate))
+                .round() as usize;
+            if scaled_count == 0 {
+                continue;
+            }
+            buffer
+                .record_with_count(s.stack_trace.clone(), scaled_count)
+                .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
+        }
+        log::trace!(target:LOG_TAG, "recorded stack trace for cpu buffer");
     }
 }

@@ -119,14 +119,21 @@ pub struct ReadPollOutput {
 
 /// A single profiling sample. NOTE: field order is part of the FFI contract.
 /// ocaml-rs decodes this struct positionally from the OCaml `sample_point`
-/// record `{ time : float; stack_trace : Stack_trace.t }` in
-/// lib/Pyro_caml_instruments.ml, so these fields must stay in that same order
-/// (time, stack_trace). Reordering either side without the other
-/// silently mis-decodes.
+/// record `{ time : float; stack_trace : Stack_trace.t; n_samples : int;
+/// size: int}` in lib/Pyro_caml_instruments.ml, so these fields must stay
+/// in that same order (time, stack_trace). Reordering either side without
+/// the other silently mis-decodes.
 #[derive(ocaml::ToValue, ocaml::FromValue)]
 pub struct CamlSamplePoint {
     pub time: f64,
     pub stack_trace: CamlStackTrace,
+    // OCaml's native `int` is an unboxed, tagged immediate. ocaml-rs decodes
+    // `isize` (crate::Int) via `int_val()`, whereas `i64`/`i32` decode `int64`/
+    // `int32`, which are *boxed* heap blocks. Feeding a native `int` to those
+    // dereferences the tagged immediate as a pointer and panics with a
+    // misaligned-pointer error, so these must stay `isize` to match `int`.
+    pub n_samples: isize,
+    pub size: isize,
 }
 
 pub fn read_poll(gc: &Runtime, cursor: Cursor) -> Result<ReadPollOutput, CamlIntfError> {

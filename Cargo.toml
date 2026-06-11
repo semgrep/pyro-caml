@@ -17,3 +17,6 @@ tempdir = "0.3.7"
 
 [build-dependencies]
 cc = "1.2.44"
+
+[patch.crates-io]
+pyroscope = { git = "https://github.com/semgrep/pyroscope-rs" }

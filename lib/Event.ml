@@ -25,7 +25,7 @@ type t = { bytes : Bytes.t; part : int; part_count : int }
 
 (* The actual underlying data we're transmitting, a stack trace with a
    timestamp *)
-type point = float * Stack_trace.raw_stack_trace
+type point = { time: float; raw_stack_trace: Stack_trace.raw_stack_trace; n_samples: int; size: int}
 type marshaled = bytes * int
 
 let split_bytes bytes size =

@@ -112,7 +112,11 @@ let emit_point_id loc =
   let record_cs = "Printexc.get_callstack" in
   let max_int = "max_int" in
   Exp.apply (var enter)
-    [(Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)])]
+    [
+      (Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)]);
+      (Nolabel, Exp.constant (Const.int 0));
+      (Nolabel, Exp.constant (Const.int 0));
+    ]
 
 let wrap_pyro_caml expr =
   let loc = expr.pexp_loc in
