@@ -30,8 +30,14 @@ type sample_point = {
     [src/ocaml_intf.rs] (records and tuples share a runtime representation), so
     do not reorder these fields without updating that decode. *)
 
+type read_poll_output = {
+    now : float;
+    sample_points: sample_point list;
+}
+
 val read_poll :
-  ?max_events:int option -> Runtime_events.cursor -> sample_point list
+  ?max_events:int option -> Runtime_events.cursor -> read_poll_output
 (** [read_poll cursor] will read the profiling runtime events from the given
-    cursor and return the entire list of {!sample_point}. Processing is done by
-    the sampler thread that calls this from rust. *)
+    cursor and return the entire list of {!sample_point} along with the current
+    time {!now}. Processing is done by the sampler thread that calls this from
+    rust. *)

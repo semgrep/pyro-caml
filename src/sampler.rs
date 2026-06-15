@@ -138,32 +138,43 @@ impl Sampler {
                 log::trace!(target:LOG_TAG, "acquiring backend config and cursor");
                 let cursor = config.acquire_cursor();
                 log::trace!(target:LOG_TAG, "sampling...");
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system clock before unix epoch")
-                    .as_secs_f64();
-                let sample_points: Vec<SamplePoint> = {
+                let (now, sample_points): (f64, Vec<SamplePoint>) = {
                     let backend_config = backend_config
                         .lock()
                         .expect("Could not take backend config lock"); // we only have one sampler thread and one reporting thread so this should never fail unless something is seriously wrong
 
-                    OCAML_GC
-                    .with_borrow(|gc| {
-                        ocaml_intf::read_poll(
-                            gc,
-                            cursor,
-                        )
-                    })
-                    .unwrap_or_else(|e| {
-                        log::error!(target:LOG_TAG, "Error reading from OCaml runtime: {:?}", e);
-                        vec![]
-                    })
-                    .into_iter()
-                    .map(|csp| SamplePoint {
-                        time: csp.time,
-                        stack_trace: csp.stack_trace.into_stack_trace(backend_config.deref(), config.pid),
-                    })
-                    .collect()
+                    let output = OCAML_GC
+                        .with_borrow(|gc| {
+                            ocaml_intf::read_poll(
+                                gc,
+                                cursor,
+                            )
+                        })
+                        .unwrap_or_else(|e| {
+                            log::error!(target:LOG_TAG, "Error reading from OCaml runtime: {:?}", e);
+                            // Fall back to the Rust clock so age-based filtering in
+                            // record_cpu_buffer still has a sane reference time.
+                            ocaml_intf::ReadPollOutput {
+                                now: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .expect("system clock before unix epoch")
+                                    .as_secs_f64(),
+                                sample_points: vec![],
+                            }
+                        });
+
+                    let sample_points = output
+                        .sample_points
+                        .into_iter()
+                        .map(|csp| SamplePoint {
+                            time: csp.time,
+                            stack_trace: csp
+                                .stack_trace
+                                .into_stack_trace(backend_config.deref(), config.pid),
+                        })
+                        .collect();
+
+                    (output.now, sample_points)
                 };
 
                 log::trace!(target:LOG_TAG, "done sampling");

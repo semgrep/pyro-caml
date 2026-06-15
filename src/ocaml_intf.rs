@@ -94,8 +94,27 @@ impl CamlStackTrace {
 pub type Cursor = ocaml::Value;
 
 ocaml::import! {
-  fn read_poll_ml(cursor:Cursor) -> ocaml::List<ocaml::Value>;
+  fn read_poll_ml(cursor:Cursor) -> CamlReadPollOutput;
   fn create_cursor_ml(path:String, pid:ocaml::Int) -> Cursor;
+}
+
+/// Decodes the OCaml `read_poll_output` record
+/// `{ now : float; sample_points : sample_point list }` from
+/// lib/Pyro_caml_instruments.ml. As with [CamlSamplePoint], ocaml-rs decodes
+/// this positionally, so the field order (now, sample_points) must match the
+/// OCaml record. `now` is the reference timestamp captured on the OCaml side at
+/// the start of the poll.
+#[derive(ocaml::ToValue, ocaml::FromValue)]
+struct CamlReadPollOutput {
+    now: f64,
+    sample_points: ocaml::List<ocaml::Value>,
+}
+
+/// Result of [read_poll]: the reference timestamp captured by OCaml together
+/// with the decoded sample points.
+pub struct ReadPollOutput {
+    pub now: f64,
+    pub sample_points: Vec<CamlSamplePoint>,
 }
 
 /// A single profiling sample. NOTE: field order is part of the FFI contract.
@@ -110,18 +129,23 @@ pub struct CamlSamplePoint {
     pub stack_trace: CamlStackTrace,
 }
 
-pub fn read_poll(gc: &Runtime, cursor: Cursor) -> Result<Vec<CamlSamplePoint>, CamlIntfError> {
+pub fn read_poll(gc: &Runtime, cursor: Cursor) -> Result<ReadPollOutput, CamlIntfError> {
     // # Safety
     //
     // it is unclear why this function is unsafe from the ocaml-rs docs
     // but we assume the caller must ensure the gc is valid, and we convert the
     // path and int for the caller, so there is no risk they coerced a bad
     // value into an ocaml::Value
-    Ok(unsafe { read_poll_ml(gc, cursor) }?
-        .into_vec()
-        .into_iter()
-        .map(<CamlSamplePoint>::from_value)
-        .collect())
+    let output = unsafe { read_poll_ml(gc, cursor) }?;
+    Ok(ReadPollOutput {
+        now: output.now,
+        sample_points: output
+            .sample_points
+            .into_vec()
+            .into_iter()
+            .map(<CamlSamplePoint>::from_value)
+            .collect(),
+    })
 }
 
 pub fn create_cursor(gc: &Runtime, path: &Path, pid: u32) -> Cursor {

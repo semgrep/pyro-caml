@@ -79,6 +79,11 @@ type sample_point = {
   stack_trace: Stack_trace.t
 }
 
+type read_poll_output = {
+    now : float;
+    sample_points: sample_point list;
+}
+
 (* Minimize work we do in process event since the instrumented program can write
    events quickly and so we need to keep pace while polling if we can *)
 let add_point raw_points = function
@@ -87,6 +92,7 @@ let add_point raw_points = function
 
 let read_poll ?(max_events = None) cursor =
   let point_buffer = Hashtbl.create 1000 in
+  let now = Unix.gettimeofday() in
   let raw_points = ref [] in
   let callbacks =
     Runtime_events.Callbacks.create
@@ -106,6 +112,9 @@ let read_poll ?(max_events = None) cursor =
   in
   (* TODO? Multithread this? *)
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
-  List.rev_map 
+  {
+    now;
+    sample_points = List.rev_map 
     (fun (time, raw_st) -> { time; stack_trace = Stack_trace.t_of_raw_stack_trace raw_st})
     !raw_points
+  }
