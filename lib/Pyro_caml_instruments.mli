@@ -14,7 +14,7 @@ val maybe_with_memprof_sampler : (unit -> 'a) -> 'a
     not a valid float. *)
 
 val emit_point_event :
-  Printexc.raw_backtrace -> n_samples:int -> size:int -> unit
+  Printexc.raw_backtrace -> n_samples:int -> size:int -> Event.point
 (** [emit_point_event (Printexc.get_callstack max_int) ~n_samples:0 ~size:0]
     records a single sample point (a stack trace plus its allocation counts) to
     the profiler.
@@ -38,6 +38,7 @@ type sample_point = {
     stack_trace : Stack_trace.t;
     n_samples: int;
     size: int;
+    kind: Event.point_kind;
 }
 (** A single profiling sample. NOTE: the field order is part of the FFI
     contract — the Rust side decodes this as a record with the same field order

@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -52,6 +52,13 @@ pub struct SamplerConfig {
 pub struct ProfileBuffer {
     pub profiling_type: ProfilingType,
     pub buffer: Arc<Mutex<StackBuffer>>,
+    /// Persistent per-call-site live total for the inuse_* profiles only
+    /// (bytes for InuseSpace, object counts for InuseObjects). Unlike the
+    /// cumulative profiles, inuse is a gauge: each tick the sampler folds Alloc
+    /// (+) and Dealloc (-) into this map, then mirrors the still-positive
+    /// entries into [Self::buffer] as the current snapshot. Empty and unused for
+    /// non-inuse profiles. The sampler thread is the only writer.
+    live: Arc<Mutex<HashMap<StackTrace, i64>>>,
 }
 
 impl SamplerConfig {
@@ -95,12 +102,36 @@ impl Drop for AliveGuard {
     }
 }
 
+/// Whether a sample records a block being allocated or freed. Mirrors OCaml's
+/// `Event.point_kind`, which crosses the FFI as an immediate int (see
+/// [crate::ocaml_intf::CamlSamplePoint]). The cumulative profiles (cpu,
+/// alloc_*) keep only [PointKind::Alloc]; the inuse_* profiles net
+/// [PointKind::Dealloc] against [PointKind::Alloc].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PointKind {
+    Alloc,
+    Dealloc,
+}
+
+impl PointKind {
+    /// Decode the OCaml `Event.point_kind` immediate: Alloc = 0, Dealloc = 1.
+    /// Any unexpected value is treated as Alloc so a decode glitch can never
+    /// subtract phantom memory from the inuse_* profiles.
+    fn from_ocaml(kind: isize) -> Self {
+        match kind {
+            1 => PointKind::Dealloc,
+            _ => PointKind::Alloc,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct SamplePoint {
     time: f64,
     stack_trace: StackTrace,
     n_samples: usize,
     size: usize,
+    kind: PointKind,
 }
 
 /// A [SamplePoint] whose stack trace has already had thread-tag rules applied.
@@ -111,6 +142,7 @@ struct TaggedSample {
     stack_trace: StackTrace,
     n_samples: usize,
     size: usize,
+    kind: PointKind,
 }
 
 pub struct Sampler {
@@ -217,6 +249,7 @@ impl Sampler {
                                 .into_stack_trace(backend_config.deref(), drain_config.pid),
                             n_samples: usize::try_from(csp.n_samples).unwrap(),
                             size: usize::try_from(csp.size).unwrap(),
+                            kind: PointKind::from_ocaml(csp.kind),
                         })
                         .collect()
                 };
@@ -302,6 +335,7 @@ impl Sampler {
                         stack_trace: empty_stack_trace.clone(),
                         n_samples: 0,
                         size: 0,
+                        kind: PointKind::Alloc,
                     });
                 }
 
@@ -330,6 +364,7 @@ impl Sampler {
                 stack_trace: sp.stack_trace.add_tag_rules(&tagset),
                 n_samples: sp.n_samples,
                 size: sp.size,
+                kind: sp.kind,
             })
             .collect()
     }
@@ -353,6 +388,7 @@ impl ProfileBuffer {
         ProfileBuffer {
             profiling_type,
             buffer: Arc::new(Mutex::new(StackBuffer::default())),
+            live: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -365,9 +401,8 @@ impl ProfileBuffer {
             ProfilingType::Cpu => self.record_cpu(tagged, now, config),
             ProfilingType::AllocSpace => self.record_alloc_space(tagged, config),
             ProfilingType::AllocObjects => self.record_alloc_objects(tagged, config),
-            ProfilingType::InuseSpace | ProfilingType::InuseObjects => {
-                unimplemented!("backend {:?} is not yet supported", self.profiling_type)
-            }
+            ProfilingType::InuseSpace => self.record_inuse_space(tagged, config),
+            ProfilingType::InuseObjects => self.record_inuse_objects(tagged, config),
         }
     }
 
@@ -380,7 +415,7 @@ impl ProfileBuffer {
         // than the whole sample set.
         let mut survivors: Vec<&TaggedSample> = tagged
             .iter()
-            .filter(|s| (now - s.time).abs() < max_age)
+            .filter(|s| s.kind == PointKind::Alloc && (now - s.time).abs() < max_age)
             .collect();
         survivors.sort_by(|a, b| (now - a.time).abs().total_cmp(&(now - b.time).abs()));
 
@@ -397,37 +432,42 @@ impl ProfileBuffer {
         log::trace!(target:LOG_TAG, "recorded stack trace for cpu buffer");
     }
 
-    fn record_alloc_space(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
-        log::trace!(target:LOG_TAG, "recording stack frames for alloc_space buffer");
-        // memprof reports n_samples ~ Poisson(memprof_rate * size_in_words) per
-        // allocation, so n_samples / memprof_rate is an unbiased estimate of the
-        // allocation size in *words*. The profile type is alloc_space:bytes, so
-        // we convert words to bytes with the native word size (OCaml's word is
-        // the native pointer width, == size_of::<usize>(): 8 on 64-bit).
+    /// Estimated bytes for one sample, shared by alloc_space and inuse_space.
+    /// memprof reports n_samples ~ Poisson(memprof_rate * size_in_words) per
+    /// allocation, so n_samples / memprof_rate is an unbiased estimate of the
+    /// allocation size in words. The profile types are *:bytes, so we convert
+    /// words to bytes with the native word size (OCaml's word is the native
+    /// pointer width, == size_of::<usize>(): 8 on 64-bit). Keeping this in one
+    /// place guarantees an Alloc and its matching Dealloc scale identically and
+    /// so net to exactly zero in the inuse_space map.
+    fn sample_bytes(n_samples: usize, config: &SamplerConfig) -> usize {
         let bytes_per_word = size_of::<usize>() as f64;
-        let scale = bytes_per_word / config.memprof_rate;
-        let mut buffer = self.buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
-        for s in tagged {
-            let scaled_count = (s.n_samples as f64 * scale).round() as usize;
-            buffer
-                .record_with_count(s.stack_trace.clone(), scaled_count)
-                .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
-        }
-        log::trace!(target:LOG_TAG, "recorded stack trace for alloc_space buffer");
+        (n_samples as f64 * bytes_per_word / config.memprof_rate).round() as usize
     }
 
-    fn record_alloc_objects(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
-        log::trace!(target:LOG_TAG, "recording stack frames for alloc_objects buffer");
+    /// Estimated object count for one sample, shared by alloc_objects and
+    /// inuse_objects. Returns 0 for samples that contribute nothing (size 0, or
+    /// a sub-unit estimate that rounds to 0). We adjust for the fact that larger
+    /// objects are more likely to be sampled; size + 1 is because the size
+    /// memprof gives us excludes the header, even though the header can be
+    /// sampled. As with [Self::sample_bytes], sharing this guarantees exact
+    /// netting between an Alloc and its Dealloc in the inuse_objects map.
+    fn sample_objects(n_samples: usize, size: usize, config: &SamplerConfig) -> usize {
+        if size == 0 {
+            return 0;
+        }
+        (n_samples as f64 / (((size + 1) as f64) * config.memprof_rate)).round() as usize
+    }
+
+    /// Helper function to record alloc_space and alloc_objects
+    fn record_alloc(&self, tagged: &[TaggedSample], scale: impl Fn(&TaggedSample) -> usize) {
         let mut buffer = self.buffer.lock().expect("Failed to lock buffer"); // we only have one sampler thread and one sending reports so we should never fail to obtain the lock unless something is seriously wrong
         for s in tagged {
-            if s.size == 0 {
+            // Skip Dealloc points
+            if s.kind != PointKind::Alloc {
                 continue;
             }
-            // We adjust for the fact that larger objects are more likely to be sampled.
-            // size + 1 is because the size given to us by memprof excludes the header,
-            // even though the header can be sampled.
-            let scaled_count = (s.n_samples as f64 / (((s.size + 1) as f64) * config.memprof_rate))
-                .round() as usize;
+            let scaled_count = scale(s);
             if scaled_count == 0 {
                 continue;
             }
@@ -435,6 +475,68 @@ impl ProfileBuffer {
                 .record_with_count(s.stack_trace.clone(), scaled_count)
                 .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
         }
-        log::trace!(target:LOG_TAG, "recorded stack trace for cpu buffer");
+    }
+
+    fn record_alloc_space(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
+        log::trace!(target:LOG_TAG, "recording stack frames for alloc_space buffer");
+        self.record_alloc(tagged, |s: &TaggedSample| {
+            Self::sample_bytes(s.n_samples, config)
+        });
+        log::trace!(target:LOG_TAG, "recorded stack trace for alloc_space buffer");
+    }
+
+    fn record_alloc_objects(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
+        log::trace!(target:LOG_TAG, "recording stack frames for alloc_objects buffer");
+        self.record_alloc(tagged, |s| {
+            Self::sample_objects(s.n_samples, s.size, config)
+        });
+        log::trace!(target:LOG_TAG, "recorded stack trace for alloc_objects buffer");
+    }
+
+    /// Fold this tick's samples into the persistent live map (Alloc adds,
+    /// Dealloc subtracts the identically-scaled amount) and mirror the
+    /// still-positive entries into the buffer as the current live snapshot.
+    /// Unlike the cumulative profiles, the buffer is fully rebuilt every tick;
+    /// [crate::backend::CamlSpy::report] therefore does not clear inuse
+    /// buffers (the sampler owns them), so a report between ticks still sees a
+    /// complete snapshot rather than an empty one.
+    fn record_inuse(&self, tagged: &[TaggedSample], scale: impl Fn(&TaggedSample) -> usize) {
+        let mut live = self.live.lock().expect("Failed to lock live map");
+        for s in tagged {
+            let amount = scale(s) as i64;
+            if amount == 0 {
+                continue;
+            }
+            let signed = match s.kind {
+                PointKind::Alloc => amount,
+                PointKind::Dealloc => -amount,
+            };
+            *live.entry(s.stack_trace.clone()).or_insert(0) += signed;
+        }
+        // Drop fully-freed call sites so the map stays bounded over a long run;
+        // a later allocation simply re-inserts them.
+        live.retain(|_, v| *v > 0);
+
+        let mut buffer = self.buffer.lock().expect("Failed to lock buffer");
+        buffer.clear();
+        for (stack_trace, &live_count) in live.iter() {
+            buffer
+                .record_with_count(stack_trace.clone(), live_count as usize)
+                .expect("Failed to record stack traces to buffer");
+        }
+    }
+
+    fn record_inuse_space(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
+        log::trace!(target:LOG_TAG, "recording stack frames for inuse_space buffer");
+        self.record_inuse(tagged, |s| Self::sample_bytes(s.n_samples, config));
+        log::trace!(target:LOG_TAG, "recorded stack trace for inuse_space buffer");
+    }
+
+    fn record_inuse_objects(&self, tagged: &[TaggedSample], config: &SamplerConfig) {
+        log::trace!(target:LOG_TAG, "recording stack frames for inuse_objects buffer");
+        self.record_inuse(tagged, |s| {
+            Self::sample_objects(s.n_samples, s.size, config)
+        });
+        log::trace!(target:LOG_TAG, "recorded stack trace for inuse_objects buffer");
     }
 }

@@ -23,9 +23,11 @@
    profiler. *)
 type t = { bytes : Bytes.t; part : int; part_count : int }
 
+type point_kind = Alloc | Dealloc
+
 (* The actual underlying data we're transmitting, a stack trace with a
    timestamp *)
-type point = { time: float; raw_stack_trace: Stack_trace.raw_stack_trace; n_samples: int; size: int}
+type point = { time: float; raw_stack_trace: Stack_trace.raw_stack_trace; n_samples: int; size: int; kind: point_kind }
 type marshaled = bytes * int
 
 let split_bytes bytes size =
@@ -78,7 +80,8 @@ let emit_point (p : point) =
   let marshaled_events = marshal_point p in
   List.iter
     (fun marshaled -> Runtime_events.User.write perf_event marshaled)
-    marshaled_events
+    marshaled_events;
+  p
 [@@inline always]
 
 (* buffer for storing partial points so we can then rebuild them  *)

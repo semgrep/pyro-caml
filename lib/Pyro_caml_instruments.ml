@@ -22,7 +22,7 @@ open Event
 (* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
-let emit_point_event raw_backtrace ~n_samples ~size =
+let emit_point_event raw_backtrace ~n_samples ~size : point =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
@@ -31,29 +31,27 @@ let emit_point_event raw_backtrace ~n_samples ~size =
      that doesn't play well when linked into a rust program. Monotomic time
      would be nice so if the user/system changes the time of day we aren't
      screwed up, but for now we can assume that probably won't happen much*)
-  let point = { 
+  let point = {
     time=Unix.gettimeofday ();
     raw_stack_trace;
     n_samples;
     size;
+    kind = Alloc;
   } in
   emit_point point
 [@@inline always]
 
-let tracker : (unit, unit) Gc.Memprof.tracker =
-  (* the only time we get the callstack is in alloc_minor + alloc_major. All of
-     these functions are called on their own stack so we can't use
-     Printexc.get_callstack in the other functions. Plus for some reason the
-     memprof backtraces seem way more comprehensive than those from
-     Printexc.get_callstack *)
-  let alloc_minor { Gc.Memprof.callstack; n_samples; size; _ } =
-    emit_point_event callstack ~n_samples ~size;
-    (* Don't care about tacking on any data to memory *)
-    None
-  in
-  let alloc_major { Gc.Memprof.callstack; n_samples; size; _ } =
-    emit_point_event callstack ~n_samples ~size;
-    None
+(* We only get a callstack in alloc_minor/alloc_major: the other callbacks run
+   on their own stack so Printexc.get_callstack is unavailable there (and the
+   memprof backtraces are richer anyway). To support the inuse_* profiles we
+   need the call site of a block when it is freed, so each alloc callback
+   stashes the emitted Alloc point as that block's memprof tracked value.
+   [promote] forwards it across the minor->major boundary unchanged (promotion
+   doesn't change what is live), and the dealloc callbacks re-emit it tagged
+   Dealloc so the profiler can net it against the original allocation. *)
+let tracker : (point, point) Gc.Memprof.tracker =
+  let alloc { Gc.Memprof.callstack; n_samples; size; _ } =
+    Some (emit_point_event callstack ~n_samples ~size)
   in
   let promote () = None in
   let dealloc_minor = Fun.id in
@@ -93,6 +91,7 @@ type sample_point = {
   stack_trace: Stack_trace.t;
   n_samples: int;
   size: int;
+  kind: point_kind;
 }
 
 type read_poll_output = {
@@ -134,11 +133,12 @@ let read_poll ?(max_events = None) cursor =
   {
     now;
     sample_points = List.rev_map 
-    (fun ({ time; raw_stack_trace; n_samples; size }) -> { 
+    (fun ({ time; raw_stack_trace; n_samples; size; kind }) -> { 
         time;
         stack_trace = Stack_trace.t_of_raw_stack_trace raw_stack_trace;
         n_samples;
-        size
+        size;
+        kind;
       })
     !raw_points
   }

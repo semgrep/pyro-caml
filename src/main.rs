@@ -17,7 +17,7 @@ use nix::{
 use pyroscope::{
     PyroscopeAgent,
     backend::{BackendConfig, BackendImpl, BackendUninitialized, StackBuffer, ThreadTagsSet},
-    encode::pprof::ProfilingType::{self, AllocObjects, AllocSpace, Cpu},
+    encode::pprof::ProfilingType::{self, AllocObjects, AllocSpace, Cpu, InuseObjects, InuseSpace},
     pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
 use tempdir::TempDir;
@@ -252,7 +252,7 @@ fn main() {
     // that the sampler writes into (shared via Arc) and the agent drains when
     // reporting. To add a profile (inuse_space, alloc_objects, ...), add its
     // profile type here and the matching arm in ProfileBuffer::record.
-    let profiles: Vec<ProfileBuffer> = [Cpu, AllocSpace, AllocObjects]
+    let profiles: Vec<ProfileBuffer> = [Cpu, AllocSpace, AllocObjects, InuseSpace, InuseObjects]
         .into_iter()
         .map(ProfileBuffer::new)
         .collect();
