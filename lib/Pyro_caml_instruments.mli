@@ -39,6 +39,7 @@ type sample_point = {
     n_samples: int;
     size: int;
     kind: Event.point_kind;
+    id: int;
 }
 (** A single profiling sample. NOTE: the field order is part of the FFI
     contract — the Rust side decodes this as a record with the same field order

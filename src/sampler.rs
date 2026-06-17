@@ -52,13 +52,12 @@ pub struct SamplerConfig {
 pub struct ProfileBuffer {
     pub profiling_type: ProfilingType,
     pub buffer: Arc<Mutex<StackBuffer>>,
-    /// Persistent per-call-site live total for the inuse_* profiles only
-    /// (bytes for InuseSpace, object counts for InuseObjects). Unlike the
-    /// cumulative profiles, inuse is a gauge: each tick the sampler folds Alloc
-    /// (+) and Dealloc (-) into this map, then mirrors the still-positive
-    /// entries into [Self::buffer] as the current snapshot. Empty and unused for
-    /// non-inuse profiles. The sampler thread is the only writer.
-    live: Arc<Mutex<HashMap<StackTrace, i64>>>,
+    /// Persistent per-block live set for the inuse_* profiles only, keyed by
+    /// the block id memprof assigns. The value is the block's scaled weight
+    /// (bytes for InuseSpace, object count for InuseObjects) together with its
+    /// allocation call site. Because only *sampled* blocks are
+    /// tracked, this map stays small (≈ live words × memprof_rate).
+    live: Arc<Mutex<HashMap<i64, (StackTrace, usize)>>>,
 }
 
 impl SamplerConfig {
@@ -132,6 +131,7 @@ struct SamplePoint {
     n_samples: usize,
     size: usize,
     kind: PointKind,
+    id: i64,
 }
 
 /// A [SamplePoint] whose stack trace has already had thread-tag rules applied.
@@ -143,6 +143,7 @@ struct TaggedSample {
     n_samples: usize,
     size: usize,
     kind: PointKind,
+    id: i64,
 }
 
 pub struct Sampler {
@@ -250,6 +251,7 @@ impl Sampler {
                             n_samples: usize::try_from(csp.n_samples).unwrap(),
                             size: usize::try_from(csp.size).unwrap(),
                             kind: PointKind::from_ocaml(csp.kind),
+                            id: csp.id as i64,
                         })
                         .collect()
                 };
@@ -336,6 +338,7 @@ impl Sampler {
                         n_samples: 0,
                         size: 0,
                         kind: PointKind::Alloc,
+                        id: 0,
                     });
                 }
 
@@ -365,6 +368,7 @@ impl Sampler {
                 n_samples: sp.n_samples,
                 size: sp.size,
                 kind: sp.kind,
+                id: sp.id,
             })
             .collect()
     }
@@ -493,35 +497,48 @@ impl ProfileBuffer {
         log::trace!(target:LOG_TAG, "recorded stack trace for alloc_objects buffer");
     }
 
-    /// Fold this tick's samples into the persistent live map (Alloc adds,
-    /// Dealloc subtracts the identically-scaled amount) and mirror the
-    /// still-positive entries into the buffer as the current live snapshot.
-    /// Unlike the cumulative profiles, the buffer is fully rebuilt every tick;
-    /// [crate::backend::CamlSpy::report] therefore does not clear inuse
-    /// buffers (the sampler owns them), so a report between ticks still sees a
-    /// complete snapshot rather than an empty one.
+    /// Fold this tick's samples into the persistent live-block map, then rebuild
+    /// the buffer as the current snapshot. Each Alloc inserts its block (keyed
+    /// by memprof's block id) with its scaled weight and call site; the matching
+    /// Dealloc removes that block by id. So an Alloc and its Dealloc net to
+    /// exactly zero without the Dealloc resending the callstack — it carries
+    /// only the id (see emit_dealloc_event). An orphan Dealloc (whose Alloc was
+    /// never seen, e.g. dropped under event loss) removes nothing; a lost
+    /// Dealloc leaves its block resident, which is the known inuse over-report
+    /// direction the lost-events warning calls out.
+    ///
+    /// Bufferis fully rebuilt every tick; [crate::backend::CamlSpy::report]
+    /// therefore does not clear inuse buffers (the sampler owns them), so a
+    /// report between ticks still sees a complete snapshot rather than an
+    /// empty one.
     fn record_inuse(&self, tagged: &[TaggedSample], scale: impl Fn(&TaggedSample) -> usize) {
         let mut live = self.live.lock().expect("Failed to lock live map");
         for s in tagged {
-            let amount = scale(s) as i64;
-            if amount == 0 {
-                continue;
+            match s.kind {
+                PointKind::Alloc => {
+                    let amount = scale(s);
+                    if amount == 0 {
+                        continue;
+                    }
+                    live.insert(s.id, (s.stack_trace.clone(), amount));
+                }
+                PointKind::Dealloc => {
+                    live.remove(&s.id);
+                }
             }
-            let signed = match s.kind {
-                PointKind::Alloc => amount,
-                PointKind::Dealloc => -amount,
-            };
-            *live.entry(s.stack_trace.clone()).or_insert(0) += signed;
         }
-        // Drop fully-freed call sites so the map stays bounded over a long run;
-        // a later allocation simply re-inserts them.
-        live.retain(|_, v| *v > 0);
+
+        // Sum the still-live blocks per call site into the snapshot.
+        let mut totals: HashMap<StackTrace, usize> = HashMap::new();
+        for (stack_trace, amount) in live.values() {
+            *totals.entry(stack_trace.clone()).or_insert(0) += *amount;
+        }
 
         let mut buffer = self.buffer.lock().expect("Failed to lock buffer");
         buffer.clear();
-        for (stack_trace, &live_count) in live.iter() {
+        for (stack_trace, live_count) in totals {
             buffer
-                .record_with_count(stack_trace.clone(), live_count as usize)
+                .record_with_count(stack_trace, live_count)
                 .expect("Failed to record stack traces to buffer");
         }
     }

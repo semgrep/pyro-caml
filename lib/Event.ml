@@ -26,8 +26,11 @@ type t = { bytes : Bytes.t; part : int; part_count : int }
 type point_kind = Alloc | Dealloc
 
 (* The actual underlying data we're transmitting, a stack trace with a
-   timestamp *)
-type point = { time: float; raw_stack_trace: Stack_trace.raw_stack_trace; n_samples: int; size: int; kind: point_kind }
+   timestamp. [id] is a process-global block id assigned at allocation; an Alloc
+   and its later Dealloc share the same id so the profiler can net them by id
+   without the Dealloc resending the callstack (which is left empty for
+   Deallocs — see emit_dealloc_event). *)
+type point = { time: float; raw_stack_trace: Stack_trace.raw_stack_trace; n_samples: int; size: int; kind: point_kind; id: int }
 type marshaled = bytes * int
 
 let split_bytes bytes size =
