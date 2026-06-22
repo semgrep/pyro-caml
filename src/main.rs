@@ -16,8 +16,8 @@ use nix::{
 };
 use pyroscope::{
     PyroscopeAgent,
-    backend::{BackendConfig, BackendImpl, BackendUninitialized, StackBuffer, ThreadTagsSet},
-    encode::pprof::ProfilingType::{self, AllocObjects, AllocSpace, Cpu, InuseObjects, InuseSpace},
+    backend::{BackendConfig, BackendImpl, BackendUninitialized, ThreadTagsSet},
+    encode::pprof::ProfilingType::{AllocObjects, AllocSpace, Cpu, InuseObjects, InuseSpace},
     pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
 use tempdir::TempDir;
@@ -133,6 +133,7 @@ fn make_agent_builder(
     basic_auth_username: Option<&str>,
     basic_auth_password: Option<&str>,
     sample_rate: u32,
+    upload_interval: u64,
     backend: BackendImpl<BackendUninitialized>,
 ) -> PyroscopeAgentBuilder {
     let mut agent_builder = PyroscopeAgentBuilder::new(
@@ -145,7 +146,8 @@ fn make_agent_builder(
     );
     agent_builder = agent_builder
         // TODO: add some tags about pyro caml's version
-        .tags(tags);
+        .tags(tags)
+        .upload_interval(upload_interval);
     // Optionally configure auth. localhost:4040 usually doesn't need it but
     // grafana does
     //
@@ -163,17 +165,16 @@ fn make_agent_builder(
     agent_builder
 }
 fn make_agent_running(
-    buffer: Arc<Mutex<StackBuffer>>,
+    profile: &ProfileBuffer,
     tagset: Arc<Mutex<ThreadTagsSet>>,
     alive: Arc<AtomicBool>,
     cli: Cli,
-    profiling_type: ProfilingType,
 ) -> PyroscopeAgent<PyroscopeAgentRunning> {
     let backend = BackendImpl::new(Box::new(CamlSpy::new(
-        buffer,
+        profile.buffer.clone(),
         tagset,
         alive,
-        profiling_type,
+        profile.profiling_type,
     )));
 
     let agent_builder = make_agent_builder(
@@ -183,9 +184,10 @@ fn make_agent_running(
         cli.basic_auth_username.as_deref(),
         cli.basic_auth_password.as_deref(),
         cli.sample_rate,
+        profile.upload_interval,
         backend,
     )
-    .profiling_type(profiling_type);
+    .profiling_type(profile.profiling_type);
 
     let agent = agent_builder.build().unwrap();
     agent.start().unwrap()
@@ -260,13 +262,7 @@ fn main() {
     let agents: Vec<PyroscopeAgent<PyroscopeAgentRunning>> = profiles
         .iter()
         .map(|profile| {
-            make_agent_running(
-                profile.buffer.clone(),
-                tagset.clone(),
-                alive.clone(),
-                agent_cli.clone(),
-                profile.profiling_type,
-            )
+            make_agent_running(profile, tagset.clone(), alive.clone(), agent_cli.clone())
         })
         .collect();
 

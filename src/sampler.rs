@@ -58,6 +58,7 @@ pub struct ProfileBuffer {
     /// allocation call site. Because only *sampled* blocks are
     /// tracked, this map stays small (≈ live words × memprof_rate).
     live: Arc<Mutex<HashMap<i64, (StackTrace, usize)>>>,
+    pub upload_interval: u64,
 }
 
 impl SamplerConfig {
@@ -393,6 +394,13 @@ impl ProfileBuffer {
             profiling_type,
             buffer: Arc::new(Mutex::new(StackBuffer::default())),
             live: Arc::new(Mutex::new(HashMap::new())),
+            upload_interval: match profiling_type {
+                ProfilingType::Cpu => 11,
+                ProfilingType::AllocSpace => 7,
+                ProfilingType::AllocObjects => 7,
+                ProfilingType::InuseSpace => 15,
+                ProfilingType::InuseObjects => 15,
+            },
         }
     }
 
