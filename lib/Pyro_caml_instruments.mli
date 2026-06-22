@@ -21,12 +21,23 @@ val create_cursor : string -> int -> Runtime_events.cursor
 (** [create_cursor path pid] creates a cursor for reading runtime events
     from the given [path] and [pid]. *)
 
+type sample_point = {
+    time : float;
+    stack_trace : Stack_trace.t;
+}
+(** A single profiling sample. NOTE: the field order is part of the FFI
+    contract — the Rust side decodes this as a [(f64, CamlStackTrace)] tuple in
+    [src/ocaml_intf.rs] (records and tuples share a runtime representation), so
+    do not reorder these fields without updating that decode. *)
+
+type read_poll_output = {
+    now : float;
+    sample_points: sample_point list;
+}
+
 val read_poll :
-  ?max_events:int option -> Runtime_events.cursor -> float -> float -> Stack_trace.t list
-(** [read_poll cursor sample_interval max_delta] will read the profiling runtime events
-    from the given cursor, and will give attempt to give a single
-    {!Stack_trace.t} per every unique thread id, within [sample_interval] of the
-    start time of this function call and within [max_delta] of the sample time.
-    If a sample is not within these intervals, they will not be considered.
-    Additionally it also ensures the samples chosen are those closest to the
-    start of the call of this function. *)
+  ?max_events:int option -> Runtime_events.cursor -> read_poll_output
+(** [read_poll cursor] will read the profiling runtime events from the given
+    cursor and return the entire list of {!sample_point} along with the current
+    time {!now}. Processing is done by the sampler thread that calls this from
+    rust. *)

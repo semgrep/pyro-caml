@@ -14,8 +14,7 @@
  *)
 (* Bindings for the pyro-caml binary to the pyro caml instrumentation library *)
 
-let read_poll cursor interval max_delta =
-  Pyro_caml_instruments.read_poll cursor interval max_delta
+let read_poll cursor = Pyro_caml_instruments.read_poll cursor
 let create_cursor = Pyro_caml_instruments.create_cursor
 
 let () =

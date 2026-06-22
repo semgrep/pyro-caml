@@ -74,22 +74,26 @@ let maybe_with_memprof_sampler ?sampling_rate f =
 (*****************************************************************************)
 let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
+type sample_point = {
+  time: float;
+  stack_trace: Stack_trace.t
+}
+
+type read_poll_output = {
+    now : float;
+    sample_points: sample_point list;
+}
+
 (* Minimize work we do in process event since the instrumented program can write
    events quickly and so we need to keep pace while polling if we can *)
-let process_point now max_age sample_points = function
-  | Some (time, raw_st) ->
-      if Float.abs(now -. time) < max_age then
-        sample_points := (time, raw_st) :: !sample_points
+let add_point raw_points = function
+  | Some raw_point -> raw_points := raw_point :: !raw_points
   | None -> ()
 
-let read_poll ?(max_events = None) cursor interval max_delta =
+let read_poll ?(max_events = None) cursor =
   let point_buffer = Hashtbl.create 1000 in
-  let now = Unix.gettimeofday () in
-  (* Both [interval] and [max_delta] bound how stale an accepted sample may be,
-     so the effective acceptance window is the smaller of the two. Compute it
-     once here rather than per-event, since process_point is on the hot path. *)
-  let max_age = Float.min interval max_delta in
-  let sample_points = ref [] in
+  let now = Unix.gettimeofday() in
+  let raw_points = ref [] in
   let callbacks =
     Runtime_events.Callbacks.create
       ~lost_events:(fun (ring_buffer_index : int) (_num_lost : int) ->
@@ -103,23 +107,14 @@ let read_poll ?(max_events = None) cursor interval max_delta =
            (e : marshaled) ->
         e
         |> process_perf_event ring_buffer_index point_buffer
-        |> process_point now max_age sample_points)
+        |> add_point raw_points)
       callbacks
   in
   (* TODO? Multithread this? *)
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
-  let sample_points =
-    !sample_points
-    |>
-    (* Sort points by whichever is closest to now. This ensures that even if a function
-     produces more samples because it has more allocations, we're still picking
-     the closest to the sample time *)
-    (* I wonder if it is worth weighting the sample point by how close it is to
-       the sample time. *)
-    List.sort (fun (a_time, _) (b_time, _) ->
-        Float.compare (Float.abs(now -. a_time)) (Float.abs(now -. b_time)))
-    |> List.map (fun (_, raw_st) -> Stack_trace.t_of_raw_stack_trace raw_st)
-    |> List.sort_uniq (fun a b ->
-           Int.compare a.Stack_trace.thread_id b.Stack_trace.thread_id)
-  in
-  sample_points
+  {
+    now;
+    sample_points = List.rev_map 
+    (fun (time, raw_st) -> { time; stack_trace = Stack_trace.t_of_raw_stack_trace raw_st})
+    !raw_points
+  }
