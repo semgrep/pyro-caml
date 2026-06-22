@@ -128,6 +128,8 @@ let maybe_with_memprof_sampler f =
 (*****************************************************************************)
 let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
+let total_lost_events = Atomic.make 0
+
 type sample_point = {
   time: float;
   stack_trace: Stack_trace.t;
@@ -156,9 +158,10 @@ let read_poll ?(max_events = None) cursor =
     Runtime_events.Callbacks.create
       ~lost_events:(fun (ring_buffer_index : int) (num_lost : int) ->
         (* If we've lost events clear that ring buffer's event buffer *)
+        let total = Atomic.fetch_and_add total_lost_events num_lost + num_lost in
         Printf.eprintf
-          "[pyro-caml] WARNING: lost %d runtime events on ring %d \n"
-          num_lost ring_buffer_index;
+          "[pyro-caml] WARNING: lost %d runtime events on ring %d (total lost: %d) \n"
+          num_lost ring_buffer_index total;
         Hashtbl.remove point_buffer ring_buffer_index)
       ()
   in
