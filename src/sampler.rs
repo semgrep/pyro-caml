@@ -394,6 +394,12 @@ impl ProfileBuffer {
             profiling_type,
             buffer: Arc::new(Mutex::new(StackBuffer::default())),
             live: Arc::new(Mutex::new(HashMap::new())),
+            // inuse_space and inuse_objects use a 15s upload interval to avoid
+            // the problem of pyroscope aggregating adjacent points together in
+            // 10s buckets and taking their sum instead of their average. The
+            // other metrics are set at various prime number upload
+            // intervals to avoid overwhelming the server with uploads that are
+            // too large
             upload_interval: Duration::from_secs(match profiling_type {
                 ProfilingType::Cpu => 11,
                 ProfilingType::AllocSpace => 7,
