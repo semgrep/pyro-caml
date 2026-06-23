@@ -127,32 +127,30 @@ fn string_to_tags(tags: &str) -> Vec<(&str, &str)> {
     tags_vec
 }
 fn make_agent_builder(
-    server_address: &str,
-    service_name: &str,
-    tags: Vec<(&str, &str)>,
-    basic_auth_username: Option<&str>,
-    basic_auth_password: Option<&str>,
-    sample_rate: u32,
-    upload_interval: u64,
+    cli: Cli,
+    upload_interval: Duration,
     backend: BackendImpl<BackendUninitialized>,
 ) -> PyroscopeAgentBuilder {
     let mut agent_builder = PyroscopeAgentBuilder::new(
-        server_address,
-        service_name,
-        sample_rate,
+        cli.server_address,
+        cli.service_name,
+        cli.sample_rate,
         "camlspy",
         env!("CARGO_PKG_VERSION"),
         backend,
     );
     agent_builder = agent_builder
         // TODO: add some tags about pyro caml's version
-        .tags(tags)
+        .tags(string_to_tags(&cli.tags))
         .upload_interval(upload_interval);
     // Optionally configure auth. localhost:4040 usually doesn't need it but
     // grafana does
     //
     // TODO token auth?
-    match (basic_auth_username, basic_auth_password) {
+    match (
+        cli.basic_auth_username.as_deref(),
+        cli.basic_auth_password.as_deref(),
+    ) {
         (Some(username), Some(password)) => {
             log::info!(target: LOG_TAG, "Using basic auth with username: {}", username);
             agent_builder = agent_builder.basic_auth(username, password);
@@ -177,17 +175,8 @@ fn make_agent_running(
         profile.profiling_type,
     )));
 
-    let agent_builder = make_agent_builder(
-        &cli.server_address,
-        &cli.service_name,
-        string_to_tags(&cli.tags),
-        cli.basic_auth_username.as_deref(),
-        cli.basic_auth_password.as_deref(),
-        cli.sample_rate,
-        profile.upload_interval,
-        backend,
-    )
-    .profiling_type(profile.profiling_type);
+    let agent_builder = make_agent_builder(cli, profile.upload_interval, backend)
+        .profiling_type(profile.profiling_type);
 
     let agent = agent_builder.build().unwrap();
     agent.start().unwrap()
