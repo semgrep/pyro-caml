@@ -128,7 +128,7 @@ fn string_to_tags(tags: &str) -> Vec<(&str, &str)> {
 }
 fn make_agent_builder(
     cli: Cli,
-    upload_interval: Duration,
+    profile: &ProfileBuffer,
     backend: BackendImpl<BackendUninitialized>,
 ) -> PyroscopeAgentBuilder {
     let mut agent_builder = PyroscopeAgentBuilder::new(
@@ -142,7 +142,8 @@ fn make_agent_builder(
     agent_builder = agent_builder
         // TODO: add some tags about pyro caml's version
         .tags(string_to_tags(&cli.tags))
-        .upload_interval(upload_interval);
+        .upload_interval(profile.upload_interval)
+        .profiling_type(profile.profiling_type);
     // Optionally configure auth. localhost:4040 usually doesn't need it but
     // grafana does
     //
@@ -175,9 +176,7 @@ fn make_agent_running(
         profile.profiling_type,
     )));
 
-    let agent_builder = make_agent_builder(cli, profile.upload_interval, backend)
-        .profiling_type(profile.profiling_type);
-
+    let agent_builder = make_agent_builder(cli, profile, backend);
     let agent = agent_builder.build().unwrap();
     agent.start().unwrap()
 }
