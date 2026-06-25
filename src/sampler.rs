@@ -265,8 +265,11 @@ impl Sampler {
         thread::spawn(move || {
             log::debug!(target:LOG_TAG, "starting sampler processing thread");
             while processing_running.load(Ordering::Relaxed) {
-                // recv_timeout so we periodically re-check `running` even when
-                // the drain thread has gone quiet.
+                // recv_timeout blocks while waiting for samples from the Sender in the other thread
+                // until it times out every 100ms to check whether we're still running. This is so
+                // we can stop the thread if the profiled program finishes either on its own or via
+                // SIGTERM. It unblocks when a message is received from the Sender and processes the
+                // samples in the message.
                 let (now, mut sample_points) = match rx
                     .recv_timeout(std::time::Duration::from_millis(100))
                 {
