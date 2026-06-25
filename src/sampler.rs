@@ -223,7 +223,14 @@ impl Sampler {
 
                 // mpsc::channel is an async channel and send will never block
                 // this thread because it has "infinite buffer" unlike sync_channel.
-                if tx.send((now, sample_points)).is_err() {
+                if let Err(e) = tx.send((now, sample_points)) {
+                    // The processing thread should only stop before the drain thread during shutdown
+                    // so we log the error if we are still running
+                    if drain_running.load(Ordering::Relaxed) {
+                        log::error!(target:LOG_TAG, "processing thread disconnected unexpectedly while still running ({}); drain thread exiting", e);
+                    } else {
+                        log::debug!(target:LOG_TAG, "processing thread stopped during shutdown; drain thread exiting");
+                    }
                     break;
                 }
 
