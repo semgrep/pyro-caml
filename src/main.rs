@@ -257,8 +257,6 @@ fn main() {
         .map(ProfileBuffer::new)
         .collect();
 
-    // One agent per profile. The buffer and profiling type come from the same
-    // ProfileBuffer, so they cannot be wired to each other incorrectly.
     let agents: Vec<PyroscopeAgent<PyroscopeAgentRunning>> = profiles
         .iter()
         .map(|profile| {
