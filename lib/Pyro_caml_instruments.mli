@@ -40,10 +40,9 @@ type sample_point = {
     size: int;
 }
 (** A single profiling sample. NOTE: the field order is part of the FFI
-    contract — the Rust side decodes this as a [(f64, CamlStackTrace, isize,
-    isize)] tuple in [src/ocaml_intf.rs] (records and tuples share a runtime
-    representation), so do not reorder these fields without updating that
-    decode. *)
+    contract — the Rust side decodes this as a record with the same field order
+    in [src/ocaml_intf.rs], so do not reorder these fields without updating
+    that decode. *)
 
 type read_poll_output = {
     now : float;
