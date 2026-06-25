@@ -41,13 +41,9 @@ pub struct SamplerConfig {
     pub event_directory: PathBuf,
 }
 
-/// A [ProfilingType] paired with the [StackBuffer] the sampler writes into and
-/// the pyroscope agent drains. (Distinct from pyroscope's `Backend` trait, which
-/// `CamlSpy` in backend.rs implements.) This is the single source of truth for
-/// the set of profiles — the sampler iterates them to record, and `main`
-/// iterates the same set to build one agent per profile, so the buffer and its
-/// profiling type can never drift out of sync. Adding a profile means adding one
-/// [ProfilingType] to that list (plus its arm in [ProfileBuffer::record]).
+/// Sampler preprocesses and records relevant samples into the [StackBuffer]
+/// based on the [ProfilingType]. The buffer is shared with the backend agent
+/// which sends the stack traces to the Pyroscope server for visualization.
 #[derive(Clone)]
 pub struct ProfileBuffer {
     pub profiling_type: ProfilingType,
