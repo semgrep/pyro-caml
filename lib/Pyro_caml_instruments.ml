@@ -22,7 +22,7 @@ open Event
 (* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
-let emit_point_event raw_backtrace n_samples size =
+let emit_point_event raw_backtrace ~n_samples ~size =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
@@ -47,12 +47,12 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
      memprof backtraces seem way more comprehensive than those from
      Printexc.get_callstack *)
   let alloc_minor { Gc.Memprof.callstack; n_samples; size; _ } =
-    emit_point_event callstack n_samples size;
+    emit_point_event callstack ~n_samples ~size;
     (* Don't care about tacking on any data to memory *)
     None
   in
   let alloc_major { Gc.Memprof.callstack; n_samples; size; _ } =
-    emit_point_event callstack n_samples size;
+    emit_point_event callstack ~n_samples ~size;
     None
   in
   let promote () = None in

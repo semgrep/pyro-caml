@@ -114,8 +114,8 @@ let emit_point_id loc =
   Exp.apply (var enter)
     [
       (Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)]);
-      (Nolabel, Exp.constant (Const.int 0));
-      (Nolabel, Exp.constant (Const.int 0));
+      (Labelled "n_samples", Exp.constant (Const.int 0));
+      (Labelled "size", Exp.constant (Const.int 0));
     ]
 
 let wrap_pyro_caml expr =

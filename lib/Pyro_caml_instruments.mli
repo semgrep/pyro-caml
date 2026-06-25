@@ -13,9 +13,19 @@ val maybe_with_memprof_sampler : (unit -> 'a) -> 'a
     set. Also throws an error if [OCAML_MEMPROF_SAMPLING_RATE] is not set or is
     not a valid float. *)
 
-val emit_point_event : Printexc.raw_backtrace -> int -> int -> unit
-(** [emit_point_event (Printexc.get_callstack max_int) 0 0] will record a stack
-    trace to the profiler. This is useful if you are in code that might not
+val emit_point_event :
+  Printexc.raw_backtrace -> n_samples:int -> size:int -> unit
+(** [emit_point_event (Printexc.get_callstack max_int) ~n_samples:0 ~size:0]
+    records a single sample point (a stack trace plus its allocation counts) to
+    the profiler.
+
+    [n_samples] is the number of memprof samples attributed to this allocation;
+    the profiler scales it by [1/sampling_rate] to estimate the total amount of
+    allocations. [size] is the size of the allocated block in words, excluding
+    the header. Used in estimating the number of objects. 
+
+    Passing [~n_samples:0 ~size:0] records a pure stack-trace point that
+    contributes no allocation. This is useful if you are in code that might not
     allocate much and you want to ensure you're still generating enough sample
     points. *)
 
