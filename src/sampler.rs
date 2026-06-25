@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
-        mpsc,
+        mpsc::{self, Receiver, Sender},
     },
     thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
@@ -135,46 +135,47 @@ impl Sampler {
         let running = Arc::new(AtomicBool::new(true));
         alive.store(true, Ordering::Relaxed);
 
-        let empty_frame = StackFrame {
-            module: None,
-            name: Some("unknown".to_string()),
-            filename: None,
-            relative_path: None,
-            absolute_path: None,
-            line: None,
-        };
-
-        let empty_stack_trace = StackTrace::new(
-            &backend_config.lock().unwrap(),
-            Some(config.pid),
-            None,
-            None,
-            vec![empty_frame],
-        );
-
-        // The OCaml runtime is thread-local (see OCAML_GC above) and brittle if
-        // touched from more than one thread, so read_poll must live on a single
-        // dedicated thread. We therefore split the sampler in two:
-        //
-        //   drain thread      — owns the OCaml runtime + cursor and does only
-        //                       read_poll + decode, then hands the resolved
-        //                       samples off over a channel. Keeping it cheap is
-        //                       what lets the per-domain runtime_events rings be
-        //                       drained on a regular cadence so they don't
-        //                       overflow (a dropped event there is lost for good,
-        //                       and a lost dealloc would inflate inuse).
-        //   processing thread — owns no OCaml. It receives each poll's samples
-        //                       and does the heavier tag + record-into-every-
-        //                       profile work
-        //
-        // The channel moves buffering out of the fixed-size, lossy ring and into
-        // the (effectively unbounded) Rust heap
+        // Split sampling into two threads. drain_thread calls read_poll and
+        // moves the samples into an unbounded rust heap channel so that we
+        // can drain the fixed-size ring buffer quickly. processing_thread
+        // does all the processing and recording into profile buffers.
         let (tx, rx) = mpsc::channel::<(f64, Vec<SamplePoint>)>();
 
-        let drain_running = running.clone();
-        let drain_config = config.clone();
-        let drain_backend_config = backend_config.clone();
-        let drain_thread = thread::spawn(move || {
+        let drain_thread = Self::spawn_drain_thread(
+            alive,
+            tx,
+            running.clone(),
+            config.clone(),
+            backend_config.clone(),
+        );
+
+        let processing_thread = Self::spawn_processing_thread(
+            rx,
+            running.clone(),
+            tagset,
+            config,
+            backend_config,
+            profiles,
+        );
+
+        Sampler {
+            running,
+            threads: vec![drain_thread, processing_thread],
+        }
+    }
+
+    /// Owns the OCaml runtime + cursor, doing only read_poll + decode, then
+    /// hands the resolved samples off over a channel. Keeping it cheap lets
+    /// the per-domain runtime_events rings be drained on a regular cadence
+    /// so they don't overflow and lose events.
+    fn spawn_drain_thread(
+        alive: Arc<AtomicBool>,
+        tx: Sender<(f64, Vec<SamplePoint>)>,
+        drain_running: Arc<AtomicBool>,
+        drain_config: SamplerConfig,
+        drain_backend_config: Arc<Mutex<BackendConfig>>,
+    ) -> JoinHandle<()> {
+        thread::spawn(move || {
             // The drain thread is the irreplaceable one (it owns the OCaml
             // runtime), so it carries the liveness guard: if it dies,
             // CamlSpy::report sees `alive == false` and surfaces the error.
@@ -226,10 +227,37 @@ impl Sampler {
                 ));
             }
             log::debug!(target:LOG_TAG, "sampler drain thread exiting")
-        });
+        })
+    }
 
-        let processing_running = running.clone();
-        let processing_thread = thread::spawn(move || {
+    /// Receives each samples and does heavier tagging, preprocessing, and
+    /// recording into each profile
+    fn spawn_processing_thread(
+        rx: Receiver<(f64, Vec<SamplePoint>)>,
+        processing_running: Arc<AtomicBool>,
+        tagset: Arc<Mutex<ThreadTagsSet>>,
+        config: SamplerConfig,
+        backend_config: Arc<Mutex<BackendConfig>>,
+        profiles: Vec<ProfileBuffer>,
+    ) -> JoinHandle<()> {
+        let empty_frame = StackFrame {
+            module: None,
+            name: Some("unknown".to_string()),
+            filename: None,
+            relative_path: None,
+            absolute_path: None,
+            line: None,
+        };
+
+        let empty_stack_trace = StackTrace::new(
+            &backend_config.lock().unwrap(),
+            Some(config.pid),
+            None,
+            None,
+            vec![empty_frame],
+        );
+
+        thread::spawn(move || {
             log::debug!(target:LOG_TAG, "starting sampler processing thread");
             while processing_running.load(Ordering::Relaxed) {
                 // recv_timeout so we periodically re-check `running` even when
@@ -258,12 +286,7 @@ impl Sampler {
                 }
             }
             log::debug!(target:LOG_TAG, "sampler processing thread exiting")
-        });
-
-        Sampler {
-            running,
-            threads: vec![drain_thread, processing_thread],
-        }
+        })
     }
 
     /// Apply thread-tag rules to every sample once, under a single tagset lock.
