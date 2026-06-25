@@ -221,8 +221,9 @@ impl Sampler {
                         .collect()
                 };
 
+                // mpsc::channel is an async channel and send will never block
+                // this thread because it has "infinite buffer" unlike sync_channel.
                 if tx.send((now, sample_points)).is_err() {
-                    // Processing thread is gone; nothing left to drain for.
                     break;
                 }
 
