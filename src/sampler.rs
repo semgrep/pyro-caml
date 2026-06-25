@@ -6,7 +6,11 @@ use std::{
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender},
+        mpsc::{
+            self, Receiver,
+            RecvTimeoutError::{Disconnected, Timeout},
+            Sender,
+        },
     },
     thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
@@ -262,12 +266,19 @@ impl Sampler {
             while processing_running.load(Ordering::Relaxed) {
                 // recv_timeout so we periodically re-check `running` even when
                 // the drain thread has gone quiet.
-                let (now, mut sample_points) =
-                    match rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                        Ok(batch) => batch,
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                    };
+                let (now, mut sample_points) = match rx
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                {
+                    Ok(batch) => batch,
+                    Err(Timeout) => {
+                        log::warn!(target:LOG_TAG, "timed out waiting for samples from drain thread");
+                        continue;
+                    }
+                    Err(Disconnected) => {
+                        log::error!(target:LOG_TAG, "drain thread disconnected (sender dropped); processing thread exiting");
+                        break;
+                    }
+                };
 
                 if sample_points.is_empty() {
                     log::trace!(target:LOG_TAG, "no stack frames found, pushing empty stack trace");
