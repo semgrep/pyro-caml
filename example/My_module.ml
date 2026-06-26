@@ -98,26 +98,4 @@ let alloc_known_count n =
     ignore (Sys.opaque_identity { x = i; y = "" })
   done
 
-(* The inuse_* analogue of [alloc_known_count]: instead of discarding, this
-   *retains* [n] records by rooting them in a module-level ref, giving the
-   inuse_space / inuse_objects profiles a known, stable target. Calling it again
-   replaces the previous set (the old one becomes garbage); [release_retained]
-   drops everything.
-
-   Sizing (64-bit), all blocks promoted to the major heap once rooted:
-   - each [t] record is 3 words (header + int [x] + pointer [y]); [y = ""] is
-     the shared empty-string atom, so it costs nothing per record.
-   - the backing array is [n + 1] words.
-   So the live set is [(3*n) + (n+1)] words ~= [4*n] words ~= [32*n] bytes, of
-   which ~[n] are record objects (+1 for the array). These are the numbers the
-   inuse_* plateaus should read back. *)
-let retained : t array ref = ref [||]
-let retain_known_count n = retained := Array.init n (fun i -> { x = i; y = "" })
-let release_retained () = retained := [||]
-
-(* Expected live bytes / object count for [retain_known_count n], for the test
-   to print so the inuse_* readings can be checked against them. *)
-let retained_bytes n = (3 * n + n + 1) * (Sys.word_size / 8)
-let retained_objects n = n + 1
-
 (* Example object *)
