@@ -1186,7 +1186,7 @@ dependencies = [
 [[package]]
 name = "pyroscope"
 version = "2.0.6"
-source = "git+https://github.com/semgrep/pyroscope-rs#47e876ccbe991e4ea6df83cbdda666d2bafae91f"
+source = "git+https://github.com/semgrep/pyroscope-rs#9e8451b1e00dec828c1ef482de6ebc25835f00fe"
 dependencies = [
  "lazy_static",
  "libc",
