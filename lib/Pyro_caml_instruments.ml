@@ -54,8 +54,8 @@ let emit_alloc id raw_backtrace ~n_samples ~size : point =
 
 (* Manually emit an Alloc sample point (used by the Pyro Caml PPX) for code that
    allocates little but should still produce samples. *)
-let emit_point_event raw_backtrace n_samples size : point =
-  emit_alloc (fresh_id ()) raw_backtrace n_samples size
+let emit_point_event raw_backtrace ~n_samples ~size : point =
+  emit_alloc (fresh_id ()) raw_backtrace ~n_samples ~size
 [@@inline always]
 
 (* A Dealloc carries only its block id and an empty stack trace. The rust backend
