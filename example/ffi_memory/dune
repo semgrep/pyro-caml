@@ -1,0 +1,11 @@
+(executable
+ (package pyro-caml-ppx)
+ (name ffi_memory)
+ (public_name ffi_memory)
+ (modules ffi_memory)
+ (libraries pyro-caml-instruments)
+ (modes exe)
+ (foreign_stubs
+  (language c)
+  (names ffi_memory_stubs)
+  (flags :standard)))
