@@ -286,7 +286,11 @@ impl Sampler {
                         continue;
                     }
                     Err(Disconnected) => {
-                        log::error!(target:LOG_TAG, "drain thread disconnected (sender dropped); processing thread exiting");
+                        if processing_running.load(Ordering::Relaxed) {
+                            log::error!(target:LOG_TAG, "drain thread disconnected unexpectedly while still running; processing thread exiting");
+                        } else {
+                            log::debug!(target:LOG_TAG, "drain thread stopped during shutdown; processing thread exiting");
+                        }
                         break;
                     }
                 };
