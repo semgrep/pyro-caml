@@ -48,15 +48,12 @@ pub struct SamplerConfig {
 /// Sampler preprocesses and records relevant samples into the [StackBuffer]
 /// based on the [ProfilingType]. The buffer is shared with the backend agent
 /// which sends the stack traces to the Pyroscope server for visualization.
+/// live maps block id to its stack trace and either the number of bytes or
+/// the object count.
 #[derive(Clone)]
 pub struct ProfileBuffer {
     pub profiling_type: ProfilingType,
     pub buffer: Arc<Mutex<StackBuffer>>,
-    /// Persistent per-block live set for the inuse_* profiles only, keyed by
-    /// the block id memprof assigns. The value is the block's scaled weight
-    /// (bytes for InuseSpace, object count for InuseObjects) together with its
-    /// allocation call site. Because only *sampled* blocks are
-    /// tracked, this map stays small (≈ live words × memprof_rate).
     live: Arc<Mutex<HashMap<i64, (StackTrace, usize)>>>,
     pub upload_interval: Duration,
 }
@@ -102,11 +99,6 @@ impl Drop for AliveGuard {
     }
 }
 
-/// Whether a sample records a block being allocated or freed. Mirrors OCaml's
-/// `Event.point_kind`, which crosses the FFI as an immediate int (see
-/// [crate::ocaml_intf::CamlSamplePoint]). The cumulative profiles (cpu,
-/// alloc_*) keep only [PointKind::Alloc]; the inuse_* profiles net
-/// [PointKind::Dealloc] against [PointKind::Alloc].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PointKind {
     Alloc,
@@ -114,9 +106,6 @@ enum PointKind {
 }
 
 impl PointKind {
-    /// Decode the OCaml `Event.point_kind` immediate: Alloc = 0, Dealloc = 1.
-    /// Any unexpected value is treated as Alloc so a decode glitch can never
-    /// subtract phantom memory from the inuse_* profiles.
     fn from_ocaml(kind: isize) -> Self {
         match kind {
             1 => PointKind::Dealloc,
@@ -453,11 +442,8 @@ impl ProfileBuffer {
     /// Estimated bytes for one sample, shared by alloc_space and inuse_space.
     /// memprof reports n_samples ~ Poisson(memprof_rate * size_in_words) per
     /// allocation, so n_samples / memprof_rate is an unbiased estimate of the
-    /// allocation size in words. The profile types are *:bytes, so we convert
-    /// words to bytes with the native word size (OCaml's word is the native
-    /// pointer width, == size_of::<usize>(): 8 on 64-bit). Keeping this in one
-    /// place guarantees an Alloc and its matching Dealloc scale identically and
-    /// so net to exactly zero in the inuse_space map.
+    /// allocation size in words. We convert words to bytes with the native word
+    /// size.
     fn sample_bytes(n_samples: usize, config: &SamplerConfig) -> usize {
         let bytes_per_word = size_of::<usize>() as f64;
         (n_samples as f64 * bytes_per_word / config.memprof_rate).round() as usize
@@ -468,8 +454,7 @@ impl ProfileBuffer {
     /// a sub-unit estimate that rounds to 0). We adjust for the fact that larger
     /// objects are more likely to be sampled; size + 1 is because the size
     /// memprof gives us excludes the header, even though the header can be
-    /// sampled. As with [Self::sample_bytes], sharing this guarantees exact
-    /// netting between an Alloc and its Dealloc in the inuse_objects map.
+    /// sampled.
     fn sample_objects(n_samples: usize, size: usize, config: &SamplerConfig) -> usize {
         if size == 0 {
             return 0;
@@ -511,20 +496,8 @@ impl ProfileBuffer {
         log::trace!(target:LOG_TAG, "recorded stack trace for alloc_objects buffer");
     }
 
-    /// Fold this tick's samples into the persistent live-block map, then rebuild
-    /// the buffer as the current snapshot. Each Alloc inserts its block (keyed
-    /// by memprof's block id) with its scaled weight and call site; the matching
-    /// Dealloc removes that block by id. So an Alloc and its Dealloc net to
-    /// exactly zero without the Dealloc resending the callstack — it carries
-    /// only the id (see emit_dealloc_event). An orphan Dealloc (whose Alloc was
-    /// never seen, e.g. dropped under event loss) removes nothing; a lost
-    /// Dealloc leaves its block resident, which is the known inuse over-report
-    /// direction the lost-events warning calls out.
-    ///
-    /// Bufferis fully rebuilt every tick; [crate::backend::CamlSpy::report]
-    /// therefore does not clear inuse buffers (the sampler owns them), so a
-    /// report between ticks still sees a complete snapshot rather than an
-    /// empty one.
+    /// Fold this tick's samples into the persistent live-block map by inserting
+    /// Allocs and removing Deallocs, then rebuild the buffer as the current snapshot.
     fn record_inuse(&self, tagged: &[TaggedSample], scale: impl Fn(&TaggedSample) -> usize) {
         let mut live = self.live.lock().expect("Failed to lock live map");
         for s in tagged {

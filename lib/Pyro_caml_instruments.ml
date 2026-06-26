@@ -22,16 +22,14 @@ open Event
 (* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
-(* Process-global, monotonically increasing block ids. Each sampled allocation
+(* Process-global, monotonically increasing atomic block ids. Each sampled allocation
    gets a fresh id that is (a) sent with its Alloc point and (b) returned as the
    block's memprof tracked value, so the matching Dealloc can reference the
-   block by id alone instead of re-sending its (possibly large, multipart)
-   callstack. Shared across domains, so it must be atomic. *)
+   block by id alone instead of re-sending its callstack. *)
 let next_block_id = Atomic.make 0
 
 let fresh_id () = Atomic.fetch_and_add next_block_id 1
 
-(* Build and emit the Alloc point for block [id]; returns the point. *)
 let emit_alloc id raw_backtrace ~n_samples ~size : point =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
@@ -52,8 +50,6 @@ let emit_alloc id raw_backtrace ~n_samples ~size : point =
   emit_point point
 [@@inline always]
 
-(* Manually emit an Alloc sample point (used by the Pyro Caml PPX) for code that
-   allocates little but should still produce samples. *)
 let emit_point_event raw_backtrace ~n_samples ~size : point =
   emit_alloc (fresh_id ()) raw_backtrace ~n_samples ~size
 [@@inline always]
@@ -77,13 +73,9 @@ let emit_dealloc_event id : unit =
 
 (* We only get a callstack in alloc_minor/alloc_major: the other callbacks run
    on their own stack so Printexc.get_callstack is unavailable there (and the
-   memprof backtraces are richer anyway). To support the inuse_* profiles the
-   profiler needs to match a freed block back to its allocation, so each alloc
-   callback assigns the block a fresh id, emits it with the Alloc point, and
-   stashes just the id as that block's memprof tracked value. promote forwards
-   the id across the minor->major boundary unchanged, and the dealloc callbacks
-   emit a stackless Dealloc carrying that id so the profiler can net it against
-   the original allocation by id alone. *)
+   memprof backtraces are richer anyway). In alloc, we create a new id before
+   emitting it and persisting the id to be used in promotion emitting a
+   deallocation event *)
 let tracker : (int, int) Gc.Memprof.tracker =
   let alloc { Gc.Memprof.callstack; n_samples; size; _ } =
     let id = fresh_id () in

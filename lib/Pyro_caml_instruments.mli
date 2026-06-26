@@ -34,8 +34,8 @@ val create_cursor : string -> int -> Runtime_events.cursor
     from the given [path] and [pid]. *)
 
 type sample_point = {
-    time : float;
-    stack_trace : Stack_trace.t;
+    time: float;
+    stack_trace: Stack_trace.t;
     n_samples: int;
     size: int;
     kind: Event.point_kind;
@@ -44,7 +44,16 @@ type sample_point = {
 (** A single profiling sample. NOTE: the field order is part of the FFI
     contract — the Rust side decodes this as a record with the same field order
     in [src/ocaml_intf.rs], so do not reorder these fields without updating
-    that decode. *)
+    that decode.
+
+    [time]: timestamp of sample point
+    [stack_trace]: resolved stack trace
+    [n_samples]: number of samples associated with the memory block we sampled
+    [size]: size of memory block we sampled
+    [kind]: whether this was an allocation or deallocation
+    [id]: we identify a block by its id so that we only need to send its stack
+          trace once during allocation and can cache it and save space on
+          deallocation *)
 
 type read_poll_output = {
     now : float;

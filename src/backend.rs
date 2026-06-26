@@ -55,10 +55,8 @@ impl Backend for CamlSpy {
         let mut buffer: MutexGuard<'_, StackBuffer> = self.buffer.lock()?;
         let reports: Vec<Report> = buffer.deref().to_owned().into();
         // Cumulative profiles (cpu, alloc_*) accumulate into the buffer between
-        // reports, so each report must drain it — every upload is then a
-        // disjoint per-interval slice. The inuse_* profiles are gauges: the
-        // sampler rebuilds their buffer as a complete live snapshot every tick
-        // (see ProfileBuffer::record_inuse), so report() must NOT clear them.
+        // reports, so each report must drain it. inuse_* profiles are rebuilt
+        // on each tick so we do not clear it on each report.
         if !matches!(
             self.profiling_type,
             ProfilingType::InuseSpace | ProfilingType::InuseObjects

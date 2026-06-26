@@ -130,13 +130,7 @@ pub struct CamlSamplePoint {
     pub stack_trace: CamlStackTrace,
     pub n_samples: isize,
     pub size: isize,
-    // OCaml `Event.point_kind` is a nullary-constructor variant, so at runtime
-    // it is an immediate int (Alloc = 0, Dealloc = 1) — same representation as
-    // `int`, hence `isize`. Mapped to [PointKind] in the sampler.
     pub kind: isize,
-    // Process-global block id. An Alloc and its matching Dealloc share this id;
-    // the inuse_* profiles net them by id so a Dealloc need not resend the
-    // callstack. Unused by the cumulative (cpu, alloc_*) profiles.
     pub id: isize,
 }
 
