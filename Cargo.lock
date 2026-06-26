@@ -1186,8 +1186,7 @@ dependencies = [
 [[package]]
 name = "pyroscope"
 version = "2.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6869e0f2cae5cef10281c57d5a260f91372d7f190a7f717eb1a54f643d92151"
+source = "git+https://github.com/semgrep/pyroscope-rs#9e8451b1e00dec828c1ef482de6ebc25835f00fe"
 dependencies = [
  "lazy_static",
  "libc",

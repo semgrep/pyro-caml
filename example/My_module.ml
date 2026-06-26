@@ -86,4 +86,16 @@ let do_long_thing () =
   alloc_thing ();
   comp_and_callback alloc_thing
 
+(* Allocates exactly [n] heap blocks — one [t] record per iteration — so the
+   alloc_objects (Count) estimate for this frame can be checked against a
+   number we control. [x = i] makes each record distinct so flambda can't
+   hoist a loop-invariant allocation out, and [Sys.opaque_identity] is an
+   optimizer barrier that stops the record being scalar-replaced or
+   eliminated as dead. [y] is the static empty string (an atom), so it adds
+   no per-iteration allocation: the count is exactly [n] records. *)
+let alloc_known_count n =
+  for i = 1 to n do
+    ignore (Sys.opaque_identity { x = i; y = "" })
+  done
+
 (* Example object *)

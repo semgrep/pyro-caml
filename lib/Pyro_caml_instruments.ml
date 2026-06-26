@@ -22,7 +22,7 @@ open Event
 (* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
-let emit_point_event raw_backtrace =
+let emit_point_event raw_backtrace ~n_samples ~size =
   let raw_stack_trace =
     Stack_trace.raw_stack_trace_of_backtrace raw_backtrace
   in
@@ -31,7 +31,12 @@ let emit_point_event raw_backtrace =
      that doesn't play well when linked into a rust program. Monotomic time
      would be nice so if the user/system changes the time of day we aren't
      screwed up, but for now we can assume that probably won't happen much*)
-  let point = (Unix.gettimeofday (), raw_stack_trace) in
+  let point = { 
+    time=Unix.gettimeofday ();
+    raw_stack_trace;
+    n_samples;
+    size;
+  } in
   emit_point point
 [@@inline always]
 
@@ -41,13 +46,13 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
      Printexc.get_callstack in the other functions. Plus for some reason the
      memprof backtraces seem way more comprehensive than those from
      Printexc.get_callstack *)
-  let alloc_minor { Gc.Memprof.callstack; _ } =
-    emit_point_event callstack;
+  let alloc_minor { Gc.Memprof.callstack; n_samples; size; _ } =
+    emit_point_event callstack ~n_samples ~size;
     (* Don't care about tacking on any data to memory *)
     None
   in
-  let alloc_major { Gc.Memprof.callstack; _ } =
-    emit_point_event callstack;
+  let alloc_major { Gc.Memprof.callstack; n_samples; size; _ } =
+    emit_point_event callstack ~n_samples ~size;
     None
   in
   let promote () = None in
@@ -55,10 +60,19 @@ let tracker : (unit, unit) Gc.Memprof.tracker =
   let dealloc_major = Fun.id in
   { Gc.Memprof.alloc_minor; alloc_major; promote; dealloc_minor; dealloc_major }
 
-(* 1e-6 is nice but chosen somewhat randomly. Too high and you end up sending
-   too many points and overwhelming the profiler, too little and you don't get
-   enough info *)
-let with_memprof_sampler ?(sampling_rate = 1e-6) f =
+let resolve_sampling_rate () =
+  let failure_msg =
+    "OCAML_MEMPROF_SAMPLING_RATE should have been set by the rust profiler" in
+  match Sys.getenv_opt "OCAML_MEMPROF_SAMPLING_RATE" with
+  | Some s -> (
+      match float_of_string_opt s with
+      | Some rate -> rate
+      | None -> failwith failure_msg)
+  | None -> failwith failure_msg
+
+  
+let with_memprof_sampler f =
+  let sampling_rate = resolve_sampling_rate () in
   let memprof = Gc.Memprof.start ~sampling_rate tracker in
   Fun.protect
     ~finally:(fun () ->
@@ -66,8 +80,8 @@ let with_memprof_sampler ?(sampling_rate = 1e-6) f =
       Gc.Memprof.discard memprof)
     f
 
-let maybe_with_memprof_sampler ?sampling_rate f =
-  if is_enabled then with_memprof_sampler ?sampling_rate f else f ()
+let maybe_with_memprof_sampler f =
+  if is_enabled then with_memprof_sampler f else f ()
 
 (*****************************************************************************)
 (* Profiler code *)
@@ -76,7 +90,9 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 type sample_point = {
   time: float;
-  stack_trace: Stack_trace.t
+  stack_trace: Stack_trace.t;
+  n_samples: int;
+  size: int;
 }
 
 type read_poll_output = {
@@ -96,8 +112,11 @@ let read_poll ?(max_events = None) cursor =
   let raw_points = ref [] in
   let callbacks =
     Runtime_events.Callbacks.create
-      ~lost_events:(fun (ring_buffer_index : int) (_num_lost : int) ->
+      ~lost_events:(fun (ring_buffer_index : int) (num_lost : int) ->
         (* If we've lost events clear that ring buffer's event buffer *)
+        Printf.eprintf
+          "[pyro-caml] WARNING: lost %d runtime events on ring %d \n"
+          num_lost ring_buffer_index;
         Hashtbl.remove point_buffer ring_buffer_index)
       ()
   in
@@ -115,6 +134,11 @@ let read_poll ?(max_events = None) cursor =
   {
     now;
     sample_points = List.rev_map 
-    (fun (time, raw_st) -> { time; stack_trace = Stack_trace.t_of_raw_stack_trace raw_st})
+    (fun ({ time; raw_stack_trace; n_samples; size }) -> { 
+        time;
+        stack_trace = Stack_trace.t_of_raw_stack_trace raw_stack_trace;
+        n_samples;
+        size
+      })
     !raw_points
   }

@@ -1,6 +1,7 @@
 use pyroscope::{
     PyroscopeError,
     backend::{Backend, Report, ReportBatch, ReportData, StackBuffer, ThreadTag, ThreadTagsSet},
+    encode::pprof::ProfilingType,
     error::Result,
 };
 use std::{
@@ -16,6 +17,7 @@ pub struct CamlSpy {
     buffer: Arc<Mutex<StackBuffer>>,
     tagset: Arc<Mutex<ThreadTagsSet>>,
     alive: Arc<AtomicBool>,
+    profiling_type: ProfilingType,
 }
 
 impl CamlSpy {
@@ -23,11 +25,13 @@ impl CamlSpy {
         buffer: Arc<Mutex<StackBuffer>>,
         tagset: Arc<Mutex<ThreadTagsSet>>,
         alive: Arc<AtomicBool>,
+        profiling_type: ProfilingType,
     ) -> Self {
         CamlSpy {
             buffer,
             tagset,
             alive,
+            profiling_type,
         }
     }
 }
@@ -53,7 +57,13 @@ impl Backend for CamlSpy {
         buffer.clear();
 
         let report_batch: ReportBatch = ReportBatch {
-            profile_type: "process_cpu".to_string(),
+            profile_type: match self.profiling_type {
+                ProfilingType::Cpu => "process_cpu".to_string(),
+                ProfilingType::AllocSpace
+                | ProfilingType::AllocObjects
+                | ProfilingType::InuseSpace
+                | ProfilingType::InuseObjects => "memory".to_string(),
+            },
             data: ReportData::Reports(reports),
         };
 

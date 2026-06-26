@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     backend::CamlSpy,
-    sampler::{Buffers, Sampler, SamplerConfig},
+    sampler::{ProfileBuffer, Sampler, SamplerConfig},
 };
 use clap::Parser;
 use nix::{
@@ -15,8 +15,10 @@ use nix::{
     unistd::Pid,
 };
 use pyroscope::{
+    PyroscopeAgent,
     backend::{BackendConfig, BackendImpl, BackendUninitialized, StackBuffer, ThreadTagsSet},
-    pyroscope::PyroscopeAgentBuilder,
+    encode::pprof::ProfilingType::{self, AllocObjects, AllocSpace, Cpu},
+    pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
 use tempdir::TempDir;
 
@@ -26,9 +28,10 @@ mod sampler;
 
 const OCAML_RUNTIME_EVENTS_START: &str = "OCAML_RUNTIME_EVENTS_START";
 const OCAML_RUNTIME_EVENTS_DIR: &str = "OCAML_RUNTIME_EVENTS_DIR";
+const OCAML_MEMPROF_SAMPLING_RATE: &str = "OCAML_MEMPROF_SAMPLING_RATE";
 const LOG_TAG: &str = "Pyro_caml::main";
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(version, about="An OCaml profiler compatible with Pyroscope", long_about = None)]
 struct Cli {
     /// Name of the service that is being profiled
@@ -55,9 +58,23 @@ struct Cli {
     #[arg(long = "event_directory", env = "PYRO_CAML_EVENT_DIRECTORY")]
     event_directory: Option<PathBuf>,
 
-    /// How many times per second to sample the OCaml program
+    /// How many times per second to sample the OCaml program for CPU profiling
     #[arg(long = "rate", env = "PYRO_CAML_SAMPLE_RATE", default_value_t = 100)]
     sample_rate: u32,
+
+    /// Memprof sampling rate: the probability that any given allocated word is
+    /// sampled. Passed through to Gc.Memprof.start in the profiled program.
+    /// 1e-6 is nice but chosen somewhat randomly. Too high and you end up sending
+    /// too many points and overwhelming the profiler, too little and you don't get
+    /// enough info. Choose a higher value such as [1e-4] if the profiler sample rate is
+    /// high, or not many allocations happen in your program. Alternatively if not
+    /// many allocations happen, use {!emit_point_event} or the Pyro Caml PPX.
+    #[arg(
+        long = "memprof_rate",
+        env = "PYRO_CAML_MEMPROF_SAMPLING_RATE",
+        default_value_t = 1e-6
+    )]
+    memprof_sampling_rate: f64,
 
     /// Max difference between sample time and sample, in microseconds,
     /// defaults to sample interval
@@ -145,9 +162,38 @@ fn make_agent_builder(
     };
     agent_builder
 }
+fn make_agent_running(
+    buffer: Arc<Mutex<StackBuffer>>,
+    tagset: Arc<Mutex<ThreadTagsSet>>,
+    alive: Arc<AtomicBool>,
+    cli: Cli,
+    profiling_type: ProfilingType,
+) -> PyroscopeAgent<PyroscopeAgentRunning> {
+    let backend = BackendImpl::new(Box::new(CamlSpy::new(
+        buffer,
+        tagset,
+        alive,
+        profiling_type,
+    )));
+
+    let agent_builder = make_agent_builder(
+        &cli.server_address,
+        &cli.service_name,
+        string_to_tags(&cli.tags),
+        cli.basic_auth_username.as_deref(),
+        cli.basic_auth_password.as_deref(),
+        cli.sample_rate,
+        backend,
+    )
+    .profiling_type(profiling_type);
+
+    let agent = agent_builder.build().unwrap();
+    agent.start().unwrap()
+}
 
 fn main() {
     let cli = Cli::parse();
+    let agent_cli = cli.clone();
 
     pretty_env_logger::formatted_timed_builder()
         .filter_level(cli.verbosity.log_level_filter())
@@ -156,6 +202,7 @@ fn main() {
     let bin = cli.binary;
     let args = cli.args;
     let sample_rate = cli.sample_rate;
+    let memprof_rate = cli.memprof_sampling_rate;
     let max_delta = cli.max_delta;
     let event_directory = cli.event_directory.unwrap_or_else(|| {
         // use a temp dir since that'll probably be in memory and probably faster
@@ -174,6 +221,10 @@ fn main() {
         .args(args)
         .env(OCAML_RUNTIME_EVENTS_START, "1")
         .env(OCAML_RUNTIME_EVENTS_DIR, event_directory.to_str().unwrap())
+        .env(
+            OCAML_MEMPROF_SAMPLING_RATE,
+            cli.memprof_sampling_rate.to_string(),
+        )
         .spawn()
         .expect("failed to execute process");
     let child_id = child.id();
@@ -183,6 +234,7 @@ fn main() {
         event_directory,
         pid: child.id(),
         sample_rate,
+        memprof_rate,
         max_delta,
     };
     let tagset = Arc::new(Mutex::new(ThreadTagsSet::default()));
@@ -196,39 +248,35 @@ fn main() {
 
     let alive = Arc::new(AtomicBool::new(false));
 
-    // The sampler writes samples into these buffers; each backend owns one and
-    // drains it when reporting.
-    //
-    // NB: cpu_buffer is shared (Arc) between the sampler (writer, via `buffers`)
-    // and the CamlSpy backend (reader, below).
-    let cpu_buffer = Arc::new(Mutex::new(StackBuffer::default()));
-    let buffers = Buffers {
-        cpu_buffer: cpu_buffer.clone(),
-    };
+    // The single source of truth for which profiles run. Each owns a StackBuffer
+    // that the sampler writes into (shared via Arc) and the agent drains when
+    // reporting. To add a profile (inuse_space, alloc_objects, ...), add its
+    // profile type here and the matching arm in ProfileBuffer::record.
+    let profiles: Vec<ProfileBuffer> = [Cpu, AllocSpace, AllocObjects]
+        .into_iter()
+        .map(ProfileBuffer::new)
+        .collect();
+
+    let agents: Vec<PyroscopeAgent<PyroscopeAgentRunning>> = profiles
+        .iter()
+        .map(|profile| {
+            make_agent_running(
+                profile.buffer.clone(),
+                tagset.clone(),
+                alive.clone(),
+                agent_cli.clone(),
+                profile.profiling_type,
+            )
+        })
+        .collect();
 
     let sampler = Sampler::start(
         sampler_config.clone(),
         backend_config,
         tagset.clone(),
         alive.clone(),
-        buffers,
+        profiles,
     );
-
-    // This is where we can add more backends and agents (alloc_space, inuse_space, etc.)
-    let backend = BackendImpl::new(Box::new(CamlSpy::new(cpu_buffer, tagset, alive)));
-
-    let agent_builder = make_agent_builder(
-        &cli.server_address,
-        &cli.service_name,
-        string_to_tags(&cli.tags),
-        cli.basic_auth_username.as_deref(),
-        cli.basic_auth_password.as_deref(),
-        cli.sample_rate,
-        backend,
-    );
-
-    let agent = agent_builder.build().unwrap();
-    let agent_running = agent.start().unwrap();
 
     ctrlc::set_handler(move || {
         log::info!(target: LOG_TAG, "Received Ctrl-C, shutting down...");
@@ -254,8 +302,15 @@ fn main() {
 
     // sleep for 1 seconds to allow the agent to flush data
     thread::sleep(Duration::from_secs(1));
-    agent_running.stop().unwrap();
-    sampler.stop().unwrap();
+    // Stop every agent (and the sampler) before unwrapping any result, so one
+    // agent's flush failure doesn't leak the others or skip sampler shutdown.
+    let agent_results: Vec<_> = agents.into_iter().map(|agent| agent.stop()).collect();
+    let sampler_result = sampler.stop();
+    for result in agent_results {
+        result.unwrap();
+    }
+    sampler_result.unwrap();
+
     // exit with the same code as the child process
     std::process::exit(ecode.code().unwrap_or_default());
 }
