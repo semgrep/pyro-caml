@@ -143,6 +143,26 @@ pub struct Sampler {
     threads: Vec<JoinHandle<()>>,
 }
 
+fn log_loss_diagnostics(diag: ocaml_intf::Diagnostics, last: &mut ocaml_intf::Diagnostics) {
+    let increased = diag.total_lost_events > last.total_lost_events
+        || diag.orphan_part_drops > last.orphan_part_drops
+        || diag.overflow_part_drops > last.overflow_part_drops;
+    if !increased {
+        return;
+    }
+    log::warn!(
+        target: LOG_TAG,
+        "event loss — ring overflow: {} (+{}); reassembler drops: orphan={} (+{}), overflow={} (+{})",
+        diag.total_lost_events,
+        diag.total_lost_events.saturating_sub(last.total_lost_events),
+        diag.orphan_part_drops,
+        diag.orphan_part_drops.saturating_sub(last.orphan_part_drops),
+        diag.overflow_part_drops,
+        diag.overflow_part_drops.saturating_sub(last.overflow_part_drops),
+    );
+    *last = diag;
+}
+
 impl Sampler {
     /// Sampler takes in a [ProfileBuffer] per profile type. It drains the OCaml
     /// event buffer and fans each sample out into every profile's buffer. This
@@ -208,6 +228,7 @@ impl Sampler {
             // CamlSpy::report sees `alive == false` and surfaces the error.
             let _alive_guard = AliveGuard(alive);
             log::debug!(target:LOG_TAG, "starting sampler drain thread");
+            let mut last_diag = ocaml_intf::Diagnostics::default();
             while drain_running.load(Ordering::Relaxed) {
                 let cursor = drain_config.acquire_cursor();
                 log::trace!(target:LOG_TAG, "draining ring...");
@@ -223,9 +244,11 @@ impl Sampler {
                                 .expect("system clock before unix epoch")
                                 .as_secs_f64(),
                             sample_points: vec![],
+                            diagnostics: Default::default(),
                         }
                     });
                 let now: f64 = output.now;
+                log_loss_diagnostics(output.diagnostics, &mut last_diag);
                 let sample_points: Vec<SamplePoint> = {
                     let backend_config = drain_backend_config
                         .lock()
@@ -262,6 +285,18 @@ impl Sampler {
                 thread::sleep(std::time::Duration::from_millis(
                     1000 / drain_config.sample_rate as u64,
                 ));
+            }
+            let any_loss = last_diag != ocaml_intf::Diagnostics::default();
+            let summary = format!(
+                "final loss diagnostics — ring overflow: {}; reassembler drops: orphan={}, overflow={}",
+                last_diag.total_lost_events,
+                last_diag.orphan_part_drops,
+                last_diag.overflow_part_drops,
+            );
+            if any_loss {
+                log::warn!(target: LOG_TAG, "{}", summary);
+            } else {
+                log::info!(target: LOG_TAG, "{}", summary);
             }
             log::debug!(target:LOG_TAG, "sampler drain thread exiting")
         })

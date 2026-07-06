@@ -98,23 +98,56 @@ ocaml::import! {
   fn create_cursor_ml(path:String, pid:ocaml::Int) -> Cursor;
 }
 
+/// Decodes the OCaml `diagnostics` record `{ total_lost_events : int;
+/// orphan_part_drops : int; overflow_part_drops : int }`
+/// from lib/Pyro_caml_instruments.ml. ocaml-rs decodes positionally, so the
+/// field order must match the OCaml record.
+#[derive(ocaml::ToValue, ocaml::FromValue)]
+struct CamlDiagnostics {
+    total_lost_events: isize,
+    orphan_part_drops: isize,
+    overflow_part_drops: isize,
+}
+
+/// Cumulative, monotonically-increasing event-loss counters reported by OCaml on
+/// every poll. [total_lost_events] is ring-buffer overflow; the rest are
+/// multipart-reassembly drops (see lib/Pyro_caml_instruments.mli).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Diagnostics {
+    pub total_lost_events: u64,
+    pub orphan_part_drops: u64,
+    pub overflow_part_drops: u64,
+}
+
+impl From<CamlDiagnostics> for Diagnostics {
+    fn from(d: CamlDiagnostics) -> Self {
+        Diagnostics {
+            total_lost_events: d.total_lost_events.max(0) as u64,
+            orphan_part_drops: d.orphan_part_drops.max(0) as u64,
+            overflow_part_drops: d.overflow_part_drops.max(0) as u64,
+        }
+    }
+}
+
 /// Decodes the OCaml `read_poll_output` record
-/// `{ now : float; sample_points : sample_point list }` from
-/// lib/Pyro_caml_instruments.ml. As with [CamlSamplePoint], ocaml-rs decodes
-/// this positionally, so the field order (now, sample_points) must match the
-/// OCaml record. `now` is the reference timestamp captured on the OCaml side at
-/// the start of the poll.
+/// `{ now : float; sample_points : sample_point list; diagnostics : diagnostics }`
+/// from lib/Pyro_caml_instruments.ml. As with [CamlSamplePoint], ocaml-rs decodes
+/// this positionally, so the field order (now, sample_points, diagnostics) must
+/// match the OCaml record. `now` is the reference timestamp captured on the OCaml
+/// side at the start of the poll.
 #[derive(ocaml::ToValue, ocaml::FromValue)]
 struct CamlReadPollOutput {
     now: f64,
     sample_points: ocaml::List<ocaml::Value>,
+    diagnostics: CamlDiagnostics,
 }
 
 /// Result of [read_poll]: the reference timestamp captured by OCaml together
-/// with the decoded sample points.
+/// with the decoded sample points and cumulative loss diagnostics.
 pub struct ReadPollOutput {
     pub now: f64,
     pub sample_points: Vec<CamlSamplePoint>,
+    pub diagnostics: Diagnostics,
 }
 
 /// A single profiling sample. NOTE: field order is part of the FFI contract.
@@ -144,6 +177,7 @@ pub fn read_poll(gc: &Runtime, cursor: Cursor) -> Result<ReadPollOutput, CamlInt
     let output = unsafe { read_poll_ml(gc, cursor) }?;
     Ok(ReadPollOutput {
         now: output.now,
+        diagnostics: output.diagnostics.into(),
         sample_points: output
             .sample_points
             .into_vec()

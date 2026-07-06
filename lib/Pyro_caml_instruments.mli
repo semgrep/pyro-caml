@@ -55,14 +55,31 @@ type sample_point = {
           trace once during allocation and can cache it and save space on
           deallocation *)
 
+type diagnostics = {
+  total_lost_events : int;
+  orphan_part_drops : int;
+  overflow_part_drops : int;
+}
+(** Cumulative, monotonically-increasing loss counters surfaced with every
+    {!read_poll} so the profiler can log which channel is dropping samples.
+    Used to determine if sampling rate is too high.
+
+    [total_lost_events]: events dropped because a per-domain ring buffer
+      overflowed before we drained it.
+    [orphan_part_drops]: multipart-reassembly drops — a non-start part arrived
+      with no start part buffered for its ring.
+    [overflow_part_drops]: multipart-reassembly drops — more parts collected
+      than [part_count], so the buffer was corrupt (interleaved/duplicated). *)
+
 type read_poll_output = {
     now : float;
     sample_points: sample_point list;
+    diagnostics: diagnostics;
 }
 
 val read_poll :
   ?max_events:int option -> Runtime_events.cursor -> read_poll_output
 (** [read_poll cursor] will read the profiling runtime events from the given
     cursor and return the entire list of {!sample_point} along with the current
-    time {!now}. Processing is done by the sampler thread that calls this from
-    rust. *)
+    time {!now} and cumulative loss {!diagnostics}. Processing is done by the
+    sampler thread that calls this from rust. *)

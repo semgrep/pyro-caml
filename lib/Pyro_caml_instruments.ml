@@ -122,6 +122,12 @@ let create_cursor path pid = Runtime_events.create_cursor (Some (path, pid))
 
 let total_lost_events = Atomic.make 0
 
+type diagnostics = {
+  total_lost_events : int;
+  orphan_part_drops : int;
+  overflow_part_drops : int;
+}
+
 type sample_point = {
   time: float;
   stack_trace: Stack_trace.t;
@@ -134,6 +140,7 @@ type sample_point = {
 type read_poll_output = {
     now : float;
     sample_points: sample_point list;
+    diagnostics: diagnostics;
 }
 
 (* Minimize work we do in process event since the instrumented program can write
@@ -149,11 +156,10 @@ let read_poll ?(max_events = None) cursor =
   let callbacks =
     Runtime_events.Callbacks.create
       ~lost_events:(fun (ring_buffer_index : int) (num_lost : int) ->
-        (* If we've lost events clear that ring buffer's event buffer *)
-        let total = Atomic.fetch_and_add total_lost_events num_lost + num_lost in
-        Printf.eprintf
-          "[pyro-caml] WARNING: lost %d runtime events on ring %d (total lost: %d) \n"
-          num_lost ring_buffer_index total;
+        (* A ring overflowed: count the loss and drop that ring's partial
+           reassembly buffer, since the parts collected so far can no longer be
+           trusted. *)
+        ignore (Atomic.fetch_and_add total_lost_events num_lost : int);
         Hashtbl.remove point_buffer ring_buffer_index)
       ()
   in
@@ -168,8 +174,14 @@ let read_poll ?(max_events = None) cursor =
   in
   (* TODO? Multithread this? *)
   let _n_events = Runtime_events.read_poll cursor callbacks max_events in
+  let diagnostics = {
+    total_lost_events = Atomic.get total_lost_events;
+    orphan_part_drops = Atomic.get Event.orphan_part_drops;
+    overflow_part_drops = Atomic.get Event.overflow_part_drops;
+  } in
   {
     now;
+    diagnostics;
     sample_points = List.rev_map
     (fun ({ time; raw_stack_trace; n_samples; size; kind; id } : point) -> {
         time;
