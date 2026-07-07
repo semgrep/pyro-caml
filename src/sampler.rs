@@ -286,17 +286,14 @@ impl Sampler {
                     1000 / drain_config.sample_rate as u64,
                 ));
             }
-            let any_loss = last_diag != ocaml_intf::Diagnostics::default();
-            let summary = format!(
-                "final loss diagnostics — ring overflow: {}; reassembler drops: orphan={}, overflow={}",
-                last_diag.total_lost_events,
-                last_diag.orphan_part_drops,
-                last_diag.overflow_part_drops,
-            );
-            if any_loss {
-                log::warn!(target: LOG_TAG, "{}", summary);
-            } else {
-                log::info!(target: LOG_TAG, "{}", summary);
+            if last_diag != ocaml_intf::Diagnostics::default() {
+                log::warn!(
+                    target: LOG_TAG,
+                    "final loss diagnostics — ring overflow: {}; reassembler drops: orphan={}, overflow={}",
+                    last_diag.total_lost_events,
+                    last_diag.orphan_part_drops,
+                    last_diag.overflow_part_drops,
+                );
             }
             log::debug!(target:LOG_TAG, "sampler drain thread exiting")
         })
