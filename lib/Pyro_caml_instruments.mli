@@ -14,7 +14,7 @@ val maybe_with_memprof_sampler : (unit -> 'a) -> 'a
     not a valid float. *)
 
 val emit_point_event :
-  Printexc.raw_backtrace -> n_samples:int -> size:int -> unit
+  Printexc.raw_backtrace -> n_samples:int -> size:int -> Event.point
 (** [emit_point_event (Printexc.get_callstack max_int) ~n_samples:0 ~size:0]
     records a single sample point (a stack trace plus its allocation counts) to
     the profiler.
@@ -34,24 +34,52 @@ val create_cursor : string -> int -> Runtime_events.cursor
     from the given [path] and [pid]. *)
 
 type sample_point = {
-    time : float;
-    stack_trace : Stack_trace.t;
+    time: float;
+    stack_trace: Stack_trace.t;
     n_samples: int;
     size: int;
+    kind: Event.point_kind;
+    id: int;
 }
 (** A single profiling sample. NOTE: the field order is part of the FFI
     contract — the Rust side decodes this as a record with the same field order
     in [src/ocaml_intf.rs], so do not reorder these fields without updating
-    that decode. *)
+    that decode.
+
+    [time]: timestamp of sample point
+    [stack_trace]: resolved stack trace
+    [n_samples]: number of samples associated with the memory block we sampled
+    [size]: size of memory block we sampled
+    [kind]: whether this was an allocation or deallocation
+    [id]: we identify a block by its id so that we only need to send its stack
+          trace once during allocation and can cache it and save space on
+          deallocation *)
+
+type diagnostics = {
+  total_lost_events : int;
+  orphan_part_drops : int;
+  overflow_part_drops : int;
+}
+(** Cumulative, monotonically-increasing loss counters surfaced with every
+    {!read_poll} so the profiler can log which channel is dropping samples.
+    Used to determine if sampling rate is too high.
+
+    [total_lost_events]: events dropped because a per-domain ring buffer
+      overflowed before we drained it.
+    [orphan_part_drops]: multipart-reassembly drops — a non-start part arrived
+      with no start part buffered for its ring.
+    [overflow_part_drops]: multipart-reassembly drops — more parts collected
+      than [part_count], so the buffer was corrupt (interleaved/duplicated). *)
 
 type read_poll_output = {
     now : float;
     sample_points: sample_point list;
+    diagnostics: diagnostics;
 }
 
 val read_poll :
   ?max_events:int option -> Runtime_events.cursor -> read_poll_output
 (** [read_poll cursor] will read the profiling runtime events from the given
     cursor and return the entire list of {!sample_point} along with the current
-    time {!now}. Processing is done by the sampler thread that calls this from
-    rust. *)
+    time {!now} and cumulative loss {!diagnostics}. Processing is done by the
+    sampler thread that calls this from rust. *)

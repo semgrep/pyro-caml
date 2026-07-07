@@ -111,11 +111,16 @@ let emit_point_id loc =
   let enter = "Pyro_caml_instruments.emit_point_event" in
   let record_cs = "Printexc.get_callstack" in
   let max_int = "max_int" in
-  Exp.apply (var enter)
+  let ignore_ = "Stdlib.ignore" in
+  Exp.apply (var ignore_)
     [
-      (Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)]);
-      (Labelled "n_samples", Exp.constant (Const.int 0));
-      (Labelled "size", Exp.constant (Const.int 0));
+      ( Nolabel,
+        Exp.apply (var enter)
+          [
+            (Nolabel, Exp.apply (var record_cs) [(Nolabel, var max_int)]);
+            (Labelled "n_samples", Exp.constant (Const.int 0));
+            (Labelled "size", Exp.constant (Const.int 0));
+          ] );
     ]
 
 let wrap_pyro_caml expr =

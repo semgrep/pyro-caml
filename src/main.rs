@@ -16,8 +16,8 @@ use nix::{
 };
 use pyroscope::{
     PyroscopeAgent,
-    backend::{BackendConfig, BackendImpl, BackendUninitialized, StackBuffer, ThreadTagsSet},
-    encode::pprof::ProfilingType::{self, AllocObjects, AllocSpace, Cpu},
+    backend::{BackendConfig, BackendImpl, BackendUninitialized, ThreadTagsSet},
+    encode::pprof::ProfilingType::{AllocObjects, AllocSpace, Cpu, InuseObjects, InuseSpace},
     pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
 use tempdir::TempDir;
@@ -127,30 +127,31 @@ fn string_to_tags(tags: &str) -> Vec<(&str, &str)> {
     tags_vec
 }
 fn make_agent_builder(
-    server_address: &str,
-    service_name: &str,
-    tags: Vec<(&str, &str)>,
-    basic_auth_username: Option<&str>,
-    basic_auth_password: Option<&str>,
-    sample_rate: u32,
+    cli: Cli,
+    profile: &ProfileBuffer,
     backend: BackendImpl<BackendUninitialized>,
 ) -> PyroscopeAgentBuilder {
     let mut agent_builder = PyroscopeAgentBuilder::new(
-        server_address,
-        service_name,
-        sample_rate,
+        cli.server_address,
+        cli.service_name,
+        cli.sample_rate,
         "camlspy",
         env!("CARGO_PKG_VERSION"),
         backend,
     );
     agent_builder = agent_builder
         // TODO: add some tags about pyro caml's version
-        .tags(tags);
+        .tags(string_to_tags(&cli.tags))
+        .upload_interval(profile.upload_interval)
+        .profiling_type(profile.profiling_type);
     // Optionally configure auth. localhost:4040 usually doesn't need it but
     // grafana does
     //
     // TODO token auth?
-    match (basic_auth_username, basic_auth_password) {
+    match (
+        cli.basic_auth_username.as_deref(),
+        cli.basic_auth_password.as_deref(),
+    ) {
         (Some(username), Some(password)) => {
             log::info!(target: LOG_TAG, "Using basic auth with username: {}", username);
             agent_builder = agent_builder.basic_auth(username, password);
@@ -163,30 +164,19 @@ fn make_agent_builder(
     agent_builder
 }
 fn make_agent_running(
-    buffer: Arc<Mutex<StackBuffer>>,
+    profile: &ProfileBuffer,
     tagset: Arc<Mutex<ThreadTagsSet>>,
     alive: Arc<AtomicBool>,
     cli: Cli,
-    profiling_type: ProfilingType,
 ) -> PyroscopeAgent<PyroscopeAgentRunning> {
     let backend = BackendImpl::new(Box::new(CamlSpy::new(
-        buffer,
+        profile.buffer.clone(),
         tagset,
         alive,
-        profiling_type,
+        profile.profiling_type,
     )));
 
-    let agent_builder = make_agent_builder(
-        &cli.server_address,
-        &cli.service_name,
-        string_to_tags(&cli.tags),
-        cli.basic_auth_username.as_deref(),
-        cli.basic_auth_password.as_deref(),
-        cli.sample_rate,
-        backend,
-    )
-    .profiling_type(profiling_type);
-
+    let agent_builder = make_agent_builder(cli, profile, backend);
     let agent = agent_builder.build().unwrap();
     agent.start().unwrap()
 }
@@ -252,7 +242,7 @@ fn main() {
     // that the sampler writes into (shared via Arc) and the agent drains when
     // reporting. To add a profile (inuse_space, alloc_objects, ...), add its
     // profile type here and the matching arm in ProfileBuffer::record.
-    let profiles: Vec<ProfileBuffer> = [Cpu, AllocSpace, AllocObjects]
+    let profiles: Vec<ProfileBuffer> = [Cpu, AllocSpace, AllocObjects, InuseSpace, InuseObjects]
         .into_iter()
         .map(ProfileBuffer::new)
         .collect();
@@ -260,13 +250,7 @@ fn main() {
     let agents: Vec<PyroscopeAgent<PyroscopeAgentRunning>> = profiles
         .iter()
         .map(|profile| {
-            make_agent_running(
-                profile.buffer.clone(),
-                tagset.clone(),
-                alive.clone(),
-                agent_cli.clone(),
-                profile.profiling_type,
-            )
+            make_agent_running(profile, tagset.clone(), alive.clone(), agent_cli.clone())
         })
         .collect();
 

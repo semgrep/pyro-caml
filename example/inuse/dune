@@ -1,0 +1,7 @@
+(executable
+ (package pyro-caml-ppx)
+ (name inuse_memory)
+ (public_name inuse_memory)
+ (modules inuse_memory)
+ (libraries pyro-caml-instruments)
+ (modes exe))

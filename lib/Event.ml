@@ -23,9 +23,18 @@
    profiler. *)
 type t = { bytes : Bytes.t; part : int; part_count : int }
 
+type point_kind = Alloc | Dealloc
+
 (* The actual underlying data we're transmitting, a stack trace with a
-   timestamp *)
-type point = { time: float; raw_stack_trace: Stack_trace.raw_stack_trace; n_samples: int; size: int}
+   timestamp. See Pyro_caml_instruments.mli for more details. *)
+type point = {
+  time: float;
+  raw_stack_trace: Stack_trace.raw_stack_trace;
+  n_samples: int;
+  size: int;
+  kind: point_kind;
+  id: int 
+}
 type marshaled = bytes * int
 
 let split_bytes bytes size =
@@ -78,12 +87,21 @@ let emit_point (p : point) =
   let marshaled_events = marshal_point p in
   List.iter
     (fun marshaled -> Runtime_events.User.write perf_event marshaled)
-    marshaled_events
+    marshaled_events;
+  p
 [@@inline always]
 
 (* buffer for storing partial points so we can then rebuild them  *)
 (* of type (ring_id, point parts) *)
 type point_buffer = (int, (int * Bytes.t) list) Hashtbl.t
+
+(* A trailing part (part <> 0) arrived with no start part buffered for its
+   ring, so we have nothing to attach it to and drop it. *)
+let orphan_part_drops = Atomic.make 0
+
+(* We collected more parts than [part_count] for a ring — parts were
+   interleaved or duplicated — so the buffer is corrupt and we drop it. *)
+let overflow_part_drops = Atomic.make 0
 
 (** [event_of_perf_event ring_buffer_index buffer event] collects marshaled
     events, and re-assembles them into points. Since the points are split into
@@ -110,15 +128,17 @@ let process_perf_event ring_buffer_index buffer (marshaled, _) : point option =
       Hashtbl.remove buffer ring_buffer_index;
       Some (Marshal.from_bytes bytes 0)
   (* If we don't have any parts, and receive something besides the start part,
-     just wait for the next start part*)
-  | { part; _ } when List.length ring_parts = 0 && part != 0 -> None
+      just wait for the next start part *)
+  | { part; _ } when ring_parts = [] && part <> 0 ->
+      Atomic.incr orphan_part_drops;
+      None
   (* If we already have some parts, or this is the start part, begin collecting parts *)
   | { bytes; part_count; _ } ->
       let parts = bytes :: ring_parts in
       let parts_len = List.length parts in
       (* If we have enough then unmarshal! *)
       (* TODO: We probably can just make the array all at once since we know the
-         size in theory? *)
+          size in theory? *)
       if parts_len = part_count then (
         let full_bytes =
           List.fold_left
@@ -135,6 +155,7 @@ let process_perf_event ring_buffer_index buffer (marshaled, _) : point option =
         Some (Marshal.from_bytes full_bytes 0))
       else if parts_len > part_count then (
         (* Weird state, clear buffer *)
+        Atomic.incr overflow_part_drops;
         Hashtbl.remove buffer ring_buffer_index;
         None)
       else (

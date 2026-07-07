@@ -54,7 +54,15 @@ impl Backend for CamlSpy {
         }
         let mut buffer: MutexGuard<'_, StackBuffer> = self.buffer.lock()?;
         let reports: Vec<Report> = buffer.deref().to_owned().into();
-        buffer.clear();
+        // Cumulative profiles (cpu, alloc_*) accumulate into the buffer between
+        // reports, so each report must drain it. inuse_* profiles are rebuilt
+        // on each tick so we do not clear it on each report.
+        if !matches!(
+            self.profiling_type,
+            ProfilingType::InuseSpace | ProfilingType::InuseObjects
+        ) {
+            buffer.clear();
+        }
 
         let report_batch: ReportBatch = ReportBatch {
             profile_type: match self.profiling_type {
