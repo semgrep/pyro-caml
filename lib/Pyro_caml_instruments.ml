@@ -22,13 +22,11 @@ open Event
 (* TODO check for more specific env var? *)
 let is_enabled = Sys.getenv_opt "OCAML_RUNTIME_EVENTS_START" |> Option.is_some
 
-(* Process-global, monotonically increasing atomic block ids. Each sampled allocation
-   gets a fresh id that is (a) sent with its Alloc point and (b) returned as the
-   block's memprof tracked value, so the matching Dealloc can reference the
-   block by id alone instead of re-sending its callstack. *)
-let next_block_id = Atomic.make 0
-
-let fresh_id () = Atomic.fetch_and_add next_block_id 1
+(* Each sampled allocation gets a fresh id that is (a) sent with its Alloc
+   point and (b) returned as the block's memprof tracked value, so the matching
+   Dealloc can reference the block by id alone instead of re-sending its
+   callstack. *)
+let fresh_id () = Oo.id (object end)
 
 let emit_alloc id raw_backtrace ~n_samples ~size : point =
   let raw_stack_trace =
