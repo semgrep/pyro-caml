@@ -148,6 +148,13 @@ let add_point raw_points = function
   | None -> ()
 
 let read_poll ?(max_events = None) cursor =
+  (* Recreating the point_buffer at each read_poll causes us to orphan some
+     points when a marshalled point is split across a read_poll boundary (i.e. 
+     part of it in one read_poll and the remaining in the next read_poll). 
+     Based on local testing, it doesn't seem like we lose too many points, and
+     it is unlikely that we miss a dealloc from this because deallocs don't
+     contain the callstack and so should fit within a single point. So this
+     shouldn't be too much of a concern. *)
   let point_buffer = Hashtbl.create 1000 in
   let now = Unix.gettimeofday() in
   let raw_points = ref [] in
