@@ -129,7 +129,7 @@ let process_perf_event ring_buffer_index buffer (marshaled, _) : point option =
       Some (Marshal.from_bytes bytes 0)
   (* If we don't have any parts, and receive something besides the start part,
       just wait for the next start part *)
-  | { part; _ } when List.length ring_parts = 0 && part != 0 ->
+  | { part; _ } when ring_parts = [] && part <> 0 ->
       Atomic.incr orphan_part_drops;
       None
   (* If we already have some parts, or this is the start part, begin collecting parts *)
