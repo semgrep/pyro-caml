@@ -72,7 +72,7 @@ struct Cli {
     #[arg(
         long = "memprof_rate",
         env = "PYRO_CAML_MEMPROF_SAMPLING_RATE",
-        default_value_t = 1e-6
+        default_value_t = 1e-7
     )]
     memprof_sampling_rate: f64,
 
