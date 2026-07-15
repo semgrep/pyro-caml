@@ -136,6 +136,23 @@ struct TaggedSample {
     id: i64,
 }
 
+/// One slice of GC time attributed to a phase path, produced by draining the
+/// runtime's GC span events (see `gc_sample` in lib/Pyro_caml_instruments.ml).
+/// The stack trace is the GC phase path (root..leaf) and `duration_ns` is the
+/// wall-clock nanoseconds spent in that path during the poll.
+#[derive(Clone)]
+struct GcSample {
+    stack_trace: StackTrace,
+    duration_ns: usize,
+}
+
+/// A [GcSample] whose stack trace has had thread-tag rules applied, mirroring
+/// [TaggedSample] for the memprof path.
+struct TaggedGcSample {
+    stack_trace: StackTrace,
+    duration_ns: usize,
+}
+
 pub struct Sampler {
     running: Arc<AtomicBool>,
     /// The drain thread (owns the OCaml runtime + cursor; does only read_poll)
@@ -185,8 +202,10 @@ impl Sampler {
         // Split sampling into two threads. drain_thread calls read_poll and
         // moves the samples into an unbounded rust heap channel so that we
         // can drain the fixed-size ring buffer quickly. processing_thread
-        // does all the processing and recording into profile buffers.
-        let (tx, rx) = mpsc::channel::<(f64, Vec<SamplePoint>)>();
+        // does all the processing and recording into profile buffers. Each
+        // batch carries both the memprof sample points and the GC phase samples
+        // drained from the same poll.
+        let (tx, rx) = mpsc::channel::<(f64, Vec<SamplePoint>, Vec<GcSample>)>();
 
         let drain_thread = Self::spawn_drain_thread(
             alive,
@@ -217,7 +236,7 @@ impl Sampler {
     /// so they don't overflow and lose events.
     fn spawn_drain_thread(
         alive: Arc<AtomicBool>,
-        tx: Sender<(f64, Vec<SamplePoint>)>,
+        tx: Sender<(f64, Vec<SamplePoint>, Vec<GcSample>)>,
         drain_running: Arc<AtomicBool>,
         drain_config: SamplerConfig,
         drain_backend_config: Arc<Mutex<BackendConfig>>,
@@ -245,15 +264,16 @@ impl Sampler {
                                 .as_secs_f64(),
                             sample_points: vec![],
                             diagnostics: Default::default(),
+                            gc_samples: vec![],
                         }
                     });
                 let now: f64 = output.now;
                 log_loss_diagnostics(output.diagnostics, &mut last_diag);
-                let sample_points: Vec<SamplePoint> = {
+                let (sample_points, gc_samples): (Vec<SamplePoint>, Vec<GcSample>) = {
                     let backend_config = drain_backend_config
                         .lock()
                         .expect("Could not take backend config lock");
-                    output
+                    let sample_points = output
                         .sample_points
                         .into_iter()
                         .map(|csp| SamplePoint {
@@ -266,12 +286,23 @@ impl Sampler {
                             kind: PointKind::from_ocaml(csp.kind),
                             id: csp.id as i64,
                         })
-                        .collect()
+                        .collect();
+                    let gc_samples = output
+                        .gc_samples
+                        .into_iter()
+                        .map(|cgs| GcSample {
+                            stack_trace: cgs
+                                .stack_trace
+                                .into_stack_trace(backend_config.deref(), drain_config.pid),
+                            duration_ns: cgs.duration_ns.max(0) as usize,
+                        })
+                        .collect();
+                    (sample_points, gc_samples)
                 };
 
                 // mpsc::channel is an async channel and send will never block
                 // this thread because it has "infinite buffer" unlike sync_channel.
-                if let Err(e) = tx.send((now, sample_points)) {
+                if let Err(e) = tx.send((now, sample_points, gc_samples)) {
                     // The processing thread should only stop before the drain thread during shutdown
                     // so we log the error if we are still running
                     if drain_running.load(Ordering::Relaxed) {
@@ -302,7 +333,7 @@ impl Sampler {
     /// Receives each samples and does heavier tagging, preprocessing, and
     /// recording into each profile
     fn spawn_processing_thread(
-        rx: Receiver<(f64, Vec<SamplePoint>)>,
+        rx: Receiver<(f64, Vec<SamplePoint>, Vec<GcSample>)>,
         processing_running: Arc<AtomicBool>,
         tagset: Arc<Mutex<ThreadTagsSet>>,
         config: SamplerConfig,
@@ -334,7 +365,7 @@ impl Sampler {
                 // we can stop the thread if the profiled program finishes either on its own or via
                 // SIGTERM. It unblocks when a message is received from the Sender and processes the
                 // samples in the message.
-                let (now, mut sample_points) = match rx
+                let (now, mut sample_points, gc_samples) = match rx
                     .recv_timeout(std::time::Duration::from_millis(100))
                 {
                     Ok(batch) => batch,
@@ -366,8 +397,9 @@ impl Sampler {
 
                 // Tag once, then fan the tagged samples out to every profile.
                 let tagged = Self::tag_samples(sample_points, &tagset);
+                let tagged_gc = Self::tag_gc_samples(gc_samples, &tagset);
                 for profile in &profiles {
-                    profile.record(&tagged, now, &config);
+                    profile.record(&tagged, &tagged_gc, now, &config);
                 }
             }
             log::debug!(target:LOG_TAG, "sampler processing thread exiting")
@@ -391,6 +423,21 @@ impl Sampler {
                 size: sp.size,
                 kind: sp.kind,
                 id: sp.id,
+            })
+            .collect()
+    }
+
+    /// Apply the same thread-tag rules to GC phase samples as [Sampler::tag_samples]
+    fn tag_gc_samples(
+        gc_samples: Vec<GcSample>,
+        tagset: &Mutex<ThreadTagsSet>,
+    ) -> Vec<TaggedGcSample> {
+        let tagset = tagset.lock().expect("Failed to lock ruleset");
+        gc_samples
+            .into_iter()
+            .map(|gs| TaggedGcSample {
+                stack_trace: gs.stack_trace.add_tag_rules(&tagset),
+                duration_ns: gs.duration_ns,
             })
             .collect()
     }
@@ -427,6 +474,7 @@ impl ProfileBuffer {
                 ProfilingType::AllocObjects => 7,
                 ProfilingType::InuseSpace => 15,
                 ProfilingType::InuseObjects => 15,
+                ProfilingType::GcTime => 13,
             }),
         }
     }
@@ -435,13 +483,20 @@ impl ProfileBuffer {
     /// Each profile owns a separate buffer, so it clones the traces it records.
     /// The match is exhaustive on purpose: adding a [ProfilingType] becomes a
     /// compile error here rather than a silently-unrecorded profile.
-    fn record(&self, tagged: &[TaggedSample], now: f64, config: &SamplerConfig) {
+    fn record(
+        &self,
+        tagged: &[TaggedSample],
+        tagged_gc: &[TaggedGcSample],
+        now: f64,
+        config: &SamplerConfig,
+    ) {
         match self.profiling_type {
             ProfilingType::Cpu => self.record_cpu(tagged, now, config),
             ProfilingType::AllocSpace => self.record_alloc_space(tagged, config),
             ProfilingType::AllocObjects => self.record_alloc_objects(tagged, config),
             ProfilingType::InuseSpace => self.record_inuse_space(tagged, config),
             ProfilingType::InuseObjects => self.record_inuse_objects(tagged, config),
+            ProfilingType::GcTime => self.record_gc_time(tagged_gc),
         }
     }
 
@@ -510,6 +565,24 @@ impl ProfileBuffer {
                 .record_with_count(s.stack_trace.clone(), scaled_count)
                 .expect("Failed to record stack traces to buffer"); // So this seems to just be a result in the pyroscope sdk for no reason
         }
+    }
+
+    /// Record this tick's GC phase samples. Like the alloc_* profiles this is
+    /// cumulative — durations accumulate into the buffer across ticks and the
+    /// backend drains it on each report (gc_time is not an inuse profile). Each
+    /// sample's value is nanoseconds spent in that phase path.
+    fn record_gc_time(&self, tagged_gc: &[TaggedGcSample]) {
+        log::trace!(target:LOG_TAG, "recording stack frames for gc_time buffer");
+        let mut buffer = self.buffer.lock().expect("Failed to lock buffer");
+        for s in tagged_gc {
+            if s.duration_ns == 0 {
+                continue;
+            }
+            buffer
+                .record_with_count(s.stack_trace.clone(), s.duration_ns)
+                .expect("Failed to record stack traces to buffer");
+        }
+        log::trace!(target:LOG_TAG, "recorded stack trace for gc_time buffer");
     }
 
     fn record_alloc_space(&self, tagged: &[TaggedSample], config: &SamplerConfig) {

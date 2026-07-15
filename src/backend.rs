@@ -71,6 +71,7 @@ impl Backend for CamlSpy {
                 | ProfilingType::AllocObjects
                 | ProfilingType::InuseSpace
                 | ProfilingType::InuseObjects => "memory".to_string(),
+                ProfilingType::GcTime => "gc".to_string(),
             },
             data: ReportData::Reports(reports),
         };
