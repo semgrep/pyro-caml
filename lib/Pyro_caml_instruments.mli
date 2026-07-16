@@ -55,6 +55,16 @@ type sample_point = {
           trace once during allocation and can cache it and save space on
           deallocation *)
 
+type gc_sample = {
+  stack_trace : Stack_trace.t;
+  duration_ns : int;
+}
+(** A slice of GC time attributed to one runtime phase path, feeding the
+    [gc_time] flamegraph. [stack_trace] carries the GC phase path (root..leaf) as
+    synthetic frames, with the domain (ring buffer index) as its thread;
+    [duration_ns] is the wall-clock nanoseconds spent in that exact phase path
+    during this poll. *)
+
 type diagnostics = {
   total_lost_events : int;
   orphan_part_drops : int;
@@ -75,6 +85,7 @@ type read_poll_output = {
     now : float;
     sample_points: sample_point list;
     diagnostics: diagnostics;
+    gc_samples: gc_sample list;
 }
 
 val read_poll :

@@ -129,25 +129,36 @@ impl From<CamlDiagnostics> for Diagnostics {
     }
 }
 
-/// Decodes the OCaml `read_poll_output` record
-/// `{ now : float; sample_points : sample_point list; diagnostics : diagnostics }`
+/// Decodes the OCaml `read_poll_output` record `{ now : float; sample_points :
+/// sample_point list; diagnostics : diagnostics; gc_samples : gc_sample list }`
 /// from lib/Pyro_caml_instruments.ml. As with [CamlSamplePoint], ocaml-rs decodes
-/// this positionally, so the field order (now, sample_points, diagnostics) must
-/// match the OCaml record. `now` is the reference timestamp captured on the OCaml
-/// side at the start of the poll.
+/// this positionally, so the field order (now, sample_points, diagnostics,
+/// gc_samples) must match the OCaml record. `now` is the reference timestamp
+/// captured on the OCaml side at the start of the poll.
 #[derive(ocaml::ToValue, ocaml::FromValue)]
 struct CamlReadPollOutput {
     now: f64,
     sample_points: ocaml::List<ocaml::Value>,
     diagnostics: CamlDiagnostics,
+    gc_samples: ocaml::List<ocaml::Value>,
+}
+
+/// A slice of GC time attributed to one runtime phase path, for the gc_time
+/// flamegraph.
+#[derive(ocaml::ToValue, ocaml::FromValue)]
+pub struct CamlGcSample {
+    pub stack_trace: CamlStackTrace,
+    pub duration_ns: isize,
 }
 
 /// Result of [read_poll]: the reference timestamp captured by OCaml together
-/// with the decoded sample points and cumulative loss diagnostics.
+/// with the decoded sample points, GC phase samples, and cumulative loss
+/// diagnostics.
 pub struct ReadPollOutput {
     pub now: f64,
     pub sample_points: Vec<CamlSamplePoint>,
     pub diagnostics: Diagnostics,
+    pub gc_samples: Vec<CamlGcSample>,
 }
 
 /// A single profiling sample. NOTE: field order is part of the FFI contract.
@@ -183,6 +194,12 @@ pub fn read_poll(gc: &Runtime, cursor: Cursor) -> Result<ReadPollOutput, CamlInt
             .into_vec()
             .into_iter()
             .map(<CamlSamplePoint>::from_value)
+            .collect(),
+        gc_samples: output
+            .gc_samples
+            .into_vec()
+            .into_iter()
+            .map(<CamlGcSample>::from_value)
             .collect(),
     })
 }
