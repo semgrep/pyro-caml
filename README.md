@@ -25,6 +25,7 @@ resulting sample is too large to fit in a single runtime event, as there is a
 1024 byte payload limit, they will be conditionally broken up into smaller
 parts.
 
+## CPU Profiling
 On the Pyro Caml collector side, at regular intervals indicated by the sample
 rate will read these samples. If it receives any sample parts it will recombine
 them into a whole sample. We then choose a single sample from each domain, in
@@ -61,6 +62,20 @@ from the callstack at a single instant in time, resulting in a less accurate
 sample. Formal testing still needs to be done, but we've found that most OCaml
 programs allocate enough that this case rarely happens, and functions that
 rarely allocate can be modified to explicitly emit samples.
+
+## Memory Profiling
+Pyro Caml now also does memory profiling, supporting the following four profiles:
+1. alloc_space: total memory allocated
+2. alloc_objects: total number of allocated objects
+3. inuse_space: currently live memory
+4. inuse_objects: number of currently live objects
+
+alloc_space/alloc_objects is built by estimating the total allocation from the samples. Memprof samples each allocated word independently with a small configurable probability. Dividing 
+
+inuse_space/inuse_objects is built by keeping track of a live set of allocations and incrementing it upon allocation and decrementing it upon deallocation.
+
+## Garbage Collector Profiling
+The runtime events system provides us callbacks for the start and end of GC phases that allows us to build up a flame graph profile similar to cpu time.
 
 # How to use
 Pyro Caml consists of three parts, the instrumentation library, the profiler,
