@@ -17,7 +17,9 @@ use nix::{
 use pyroscope::{
     PyroscopeAgent,
     backend::{BackendConfig, BackendImpl, BackendUninitialized, ThreadTagsSet},
-    encode::pprof::ProfilingType::{AllocObjects, AllocSpace, Cpu, GcTime, InuseObjects, InuseSpace},
+    encode::pprof::ProfilingType::{
+        AllocObjects, AllocSpace, Cpu, GcTime, InuseObjects, InuseSpace,
+    },
     pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
 use tempdir::TempDir;
@@ -29,6 +31,7 @@ mod sampler;
 const OCAML_RUNTIME_EVENTS_START: &str = "OCAML_RUNTIME_EVENTS_START";
 const OCAML_RUNTIME_EVENTS_DIR: &str = "OCAML_RUNTIME_EVENTS_DIR";
 const OCAML_MEMPROF_SAMPLING_RATE: &str = "OCAML_MEMPROF_SAMPLING_RATE";
+const OCAMLRUNPARAM: &str = "OCAMLRUNPARAM";
 const LOG_TAG: &str = "Pyro_caml::main";
 
 #[derive(Parser, Clone)]
@@ -75,6 +78,14 @@ struct Cli {
         default_value_t = 1e-7
     )]
     memprof_sampling_rate: f64,
+
+    #[arg(
+        long,
+        short = 'e',
+        env = "PYRO_CAML_RING_BUFFER_SIZE",
+        default_value_t = 20
+    )]
+    ring_buffer_size: u32,
 
     /// Max difference between sample time and sample, in microseconds,
     /// defaults to sample interval
@@ -215,6 +226,7 @@ fn main() {
             OCAML_MEMPROF_SAMPLING_RATE,
             cli.memprof_sampling_rate.to_string(),
         )
+        .env(OCAMLRUNPARAM, format!("e={}", cli.ring_buffer_size))
         .spawn()
         .expect("failed to execute process");
     let child_id = child.id();
@@ -242,11 +254,17 @@ fn main() {
     // that the sampler writes into (shared via Arc) and the agent drains when
     // reporting. To add a profile (inuse_space, alloc_objects, ...), add its
     // profile type here and the matching arm in ProfileBuffer::record.
-    let profiles: Vec<ProfileBuffer> =
-        [Cpu, AllocSpace, AllocObjects, InuseSpace, InuseObjects, GcTime]
-            .into_iter()
-            .map(ProfileBuffer::new)
-            .collect();
+    let profiles: Vec<ProfileBuffer> = [
+        Cpu,
+        AllocSpace,
+        AllocObjects,
+        InuseSpace,
+        InuseObjects,
+        GcTime,
+    ]
+    .into_iter()
+    .map(ProfileBuffer::new)
+    .collect();
 
     let agents: Vec<PyroscopeAgent<PyroscopeAgentRunning>> = profiles
         .iter()
