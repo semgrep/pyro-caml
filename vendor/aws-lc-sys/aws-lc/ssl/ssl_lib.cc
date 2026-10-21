@@ -506,6 +506,19 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
   ret->conf_min_version_use_default = true;
   ret->enable_read_ahead = false;
 
+#if defined(AWSLC_CRYPTO_POLICIES)
+  // Opt-in (-DENABLE_CRYPTO_POLICIES): seed this SSL_CTX from the system
+  // crypto-policies OpenSSL back-end after the built-in defaults above. This is
+  // best-effort and non-fatal; consumers may still override afterward.
+  //
+  // |method->version| is non-zero for the legacy version-locked methods, whose
+  // single acceptable version was pinned above. Pass that along so the policy's
+  // protocol bounds do not undo the pin.
+  bssl::ssl_ctx_apply_crypto_policy(
+      ret.get(), bssl::ssl_crypto_policy_default_path(), ret->method->is_dtls,
+      method->version != 0);
+#endif
+
   return ret.release();
 }
 
@@ -526,6 +539,8 @@ ssl_st::ssl_st(SSL_CTX *ctx_arg)
       read_ahead_buffer_size(ctx_arg->read_ahead_buffer_size),
       msg_callback(ctx_arg->msg_callback),
       msg_callback_arg(ctx_arg->msg_callback_arg),
+      security_callback(ctx_arg->security_callback),
+      security_callback_ex_data(ctx_arg->security_callback_ex_data),
       ctx(UpRef(ctx_arg)),
       session_ctx(UpRef(ctx_arg)),
       options(ctx->options),
@@ -922,7 +937,10 @@ static int ssl_read_impl(SSL *ssl) {
 
   // Replay post-handshake message errors.
   if (!check_read_error(ssl)) {
-    return -1;
+    // Replay the original return value, so that repeating a failed |SSL_read|
+    // or |SSL_peek| is idempotent. The first unexpected EOF read returns zero
+    // to match OpenSSL 3.x; replaying that zero preserves AWS-LC's idempotence.
+    return ssl->s3->unexpected_eof ? 0 : -1;
   }
 
   while (ssl->s3->pending_app_data.empty()) {
@@ -1156,9 +1174,10 @@ int SSL_shutdown(SSL *ssl) {
   }
 
   if (ssl->quiet_shutdown) {
-    // Do nothing if configured not to send a close_notify.
+    // Simulate bidirectional close_notify, replacing any previous read error.
     ssl->s3->write_shutdown = ssl_shutdown_close_notify;
     ssl->s3->read_shutdown = ssl_shutdown_close_notify;
+    ssl->s3->unexpected_eof = false;
     return 1;
   }
 
@@ -2026,6 +2045,39 @@ int SSL_set1_groups(SSL *ssl, const int *groups, size_t num_groups) {
                                MakeConstSpan(groups, num_groups));
 }
 
+static bool ssl_check_group_ids(Array<uint16_t> *out_group_ids,
+                                Span<const uint16_t> group_ids) {
+  for (size_t i = 0; i < group_ids.size(); i++) {
+    if (ssl_group_id_to_nid(group_ids[i]) == NID_undef) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_UNSUPPORTED_ELLIPTIC_CURVE);
+      return false;
+    }
+    // Reject duplicate group IDs
+    for (size_t j = 0; j < i; j++) {
+      if (group_ids[i] == group_ids[j]) {
+        OPENSSL_PUT_ERROR(SSL, SSL_R_DUPLICATE_KEY_SHARE);
+        return false;
+      }
+    }
+  }
+  return out_group_ids->CopyFrom(group_ids);
+}
+
+int SSL_CTX_set1_group_ids(SSL_CTX *ctx, const uint16_t *group_ids,
+                           size_t num_group_ids) {
+  return ssl_check_group_ids(&ctx->supported_group_list,
+                             MakeConstSpan(group_ids, num_group_ids));
+}
+
+int SSL_set1_group_ids(SSL *ssl, const uint16_t *group_ids,
+                       size_t num_group_ids) {
+  if (!ssl->config) {
+    return 0;
+  }
+  return ssl_check_group_ids(&ssl->config->supported_group_list,
+                             MakeConstSpan(group_ids, num_group_ids));
+}
+
 static bool ssl_str_to_group_ids(Array<uint16_t> *out_group_ids,
                                  const char *str) {
   // Count the number of groups in the list.
@@ -2732,9 +2784,12 @@ void SSL_set_shutdown(SSL *ssl, int mode) {
 
 int SSL_get_shutdown(const SSL *ssl) {
   int ret = 0;
-  if (ssl->s3->read_shutdown != ssl_shutdown_none) {
+  if (ssl->s3->read_shutdown != ssl_shutdown_none &&
+      !ssl->s3->unexpected_eof) {
     // Historically, OpenSSL set |SSL_RECEIVED_SHUTDOWN| on both close_notify
-    // and fatal alert.
+    // and fatal alert. An unexpected transport EOF is neither, so OpenSSL
+    // leaves the shutdown state unset in that case and so do we. Otherwise the
+    // caller could not distinguish a truncated connection from a clean one.
     ret |= SSL_RECEIVED_SHUTDOWN;
   }
   if (ssl->s3->write_shutdown == ssl_shutdown_close_notify) {
@@ -3159,7 +3214,23 @@ int SSL_in_accept_init(const SSL *ssl) {
   return SSL_in_init(ssl) && SSL_is_server(ssl);
 }
 
-int SSL_is_init_finished(const SSL *ssl) { return !SSL_in_init(ssl); }
+int SSL_is_init_finished(const SSL *ssl) {
+  // OpenSSL's |SSLfatal| moves the state machine into an error state, which
+  // makes |SSL_is_init_finished| report zero after a fatal error even when the
+  // handshake had already completed. Callers use this to recognize that the
+  // connection is no longer in a normal running state; libevent, for example,
+  // relies on it to tell a truncated connection apart from a protocol error.
+  // Mirror that for an unexpected transport EOF.
+  //
+  // This is deliberately not folded into |SSL_in_init|. That predicate carries
+  // the internal invariant that a handshake object exists whenever it is true
+  // (see |ssl_can_read| and |ssl_can_write|), and |hs| has already been
+  // released by the time an unexpected EOF can be observed.
+  if (ssl->s3->unexpected_eof) {
+    return 0;
+  }
+  return !SSL_in_init(ssl);
+}
 
 int SSL_in_init(const SSL *ssl) {
   // This returns false once all the handshake state has been finalized, to

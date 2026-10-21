@@ -76,6 +76,8 @@ int EVP_CIPHER_CTX_copy(EVP_CIPHER_CTX *out, const EVP_CIPHER_CTX *in) {
 
   if (in->cipher->flags & EVP_CIPH_CUSTOM_COPY) {
     if (!in->cipher->ctrl((EVP_CIPHER_CTX *)in, EVP_CTRL_COPY, 0, out)) {
+      OPENSSL_free(out->cipher_data);
+      out->cipher_data = NULL;
       out->cipher = NULL;
       return 0;
     }
@@ -130,6 +132,8 @@ int EVP_CipherInit_ex(EVP_CIPHER_CTX *ctx, const EVP_CIPHER *cipher,
 
     if (ctx->cipher->flags & EVP_CIPH_CTRL_INIT) {
       if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_INIT, 0, NULL)) {
+        OPENSSL_free(ctx->cipher_data);
+        ctx->cipher_data = NULL;
         ctx->cipher = NULL;
         OPENSSL_PUT_ERROR(CIPHER, CIPHER_R_INITIALIZATION_ERROR);
         return 0;
@@ -404,18 +408,36 @@ int EVP_DecryptUpdate(EVP_CIPHER_CTX *ctx, uint8_t *out, int *out_len,
     fix_len = 1;
   }
 
-  if (!EVP_EncryptUpdate(ctx, out, out_len, in, in_len)) {
+  // If the ciphertext seen so far ends on a block boundary, withhold its last
+  // block: it may be the padded, final block, which only |EVP_DecryptFinal_ex|
+  // can unpad. |hold| is the portion of that block in |in|; the rest is in
+  // |ctx->buf|.
+  int hold = 0;
+  if (b > 1 && block_remainder(ctx, ctx->buf_len + in_len) == 0) {
+    hold = in_len < (int)b ? in_len : (int)b;
+  }
+
+  if (!EVP_EncryptUpdate(ctx, out, out_len, in, in_len - hold)) {
     return 0;
   }
 
-  // if we have 'decrypted' a multiple of block size, make sure
-  // we have a copy of this last block
-  if (b > 1 && !ctx->buf_len) {
-    *out_len -= b;
+  // Decrypt the withheld block into |ctx->final| rather than |out|, so bytes
+  // past |*out_len| are left unmodified.
+  ctx->final_used = 0;
+  if (hold != 0) {
+    int final_len;
+    if (!EVP_EncryptUpdate(ctx, ctx->final, &final_len, in + in_len - hold,
+                           hold)) {
+      return 0;
+    }
+    assert(final_len == (int)b);
+    assert(ctx->buf_len == 0);
+    if (final_len != (int)b || ctx->buf_len != 0) {
+      OPENSSL_PUT_ERROR(CIPHER, ERR_R_INTERNAL_ERROR);
+      ctx->poisoned = 1;
+      return 0;
+    }
     ctx->final_used = 1;
-    OPENSSL_memcpy(ctx->final, &out[*out_len], b);
-  } else {
-    ctx->final_used = 0;
   }
 
   if (fix_len) {

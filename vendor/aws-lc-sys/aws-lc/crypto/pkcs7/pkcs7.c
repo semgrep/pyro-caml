@@ -3,6 +3,7 @@
 
 #include <openssl/pkcs7.h>
 
+#include <limits.h>
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
@@ -198,10 +199,39 @@ int PKCS7_set_type(PKCS7 *p7, int type) {
     return 0;
   }
 
+  // Free any previously-installed content using the current |p7->type| so the
+  // correct destructor runs on the existing union member, instead of the new
+  // type's destructor running on type-confused memory.
+  if (p7->d.ptr != NULL) {
+    switch (OBJ_obj2nid(p7->type)) {
+      case NID_pkcs7_signed:
+        PKCS7_SIGNED_free(p7->d.sign);
+        break;
+      case NID_pkcs7_digest:
+        PKCS7_DIGEST_free(p7->d.digest);
+        break;
+      case NID_pkcs7_data:
+        ASN1_OCTET_STRING_free(p7->d.data);
+        break;
+      case NID_pkcs7_signedAndEnveloped:
+        PKCS7_SIGN_ENVELOPE_free(p7->d.signed_and_enveloped);
+        break;
+      case NID_pkcs7_enveloped:
+        PKCS7_ENVELOPE_free(p7->d.enveloped);
+        break;
+      case NID_pkcs7_encrypted:
+        PKCS7_ENCRYPT_free(p7->d.encrypted);
+        break;
+      default:
+        ASN1_TYPE_free(p7->d.other);
+        break;
+    }
+    p7->d.ptr = NULL;
+  }
+
   switch (type) {
     case NID_pkcs7_signed:
       p7->type = obj;
-      PKCS7_SIGNED_free(p7->d.sign);
       p7->d.sign = PKCS7_SIGNED_new();
       if (p7->d.sign == NULL) {
         return 0;
@@ -214,7 +244,6 @@ int PKCS7_set_type(PKCS7 *p7, int type) {
       break;
     case NID_pkcs7_digest:
       p7->type = obj;
-      PKCS7_DIGEST_free(p7->d.digest);
       p7->d.digest = PKCS7_DIGEST_new();
       if (p7->d.digest == NULL) {
         return 0;
@@ -227,7 +256,6 @@ int PKCS7_set_type(PKCS7 *p7, int type) {
       break;
     case NID_pkcs7_data:
       p7->type = obj;
-      ASN1_OCTET_STRING_free(p7->d.data);
       p7->d.data = ASN1_OCTET_STRING_new();
       if (p7->d.data == NULL) {
         return 0;
@@ -235,7 +263,6 @@ int PKCS7_set_type(PKCS7 *p7, int type) {
       break;
     case NID_pkcs7_signedAndEnveloped:
       p7->type = obj;
-      PKCS7_SIGN_ENVELOPE_free(p7->d.signed_and_enveloped);
       p7->d.signed_and_enveloped = PKCS7_SIGN_ENVELOPE_new();
       if (p7->d.signed_and_enveloped == NULL) {
         return 0;
@@ -250,7 +277,6 @@ int PKCS7_set_type(PKCS7 *p7, int type) {
       break;
     case NID_pkcs7_enveloped:
       p7->type = obj;
-      PKCS7_ENVELOPE_free(p7->d.enveloped);
       p7->d.enveloped = PKCS7_ENVELOPE_new();
       if (p7->d.enveloped == NULL) {
         return 0;
@@ -264,7 +290,6 @@ int PKCS7_set_type(PKCS7 *p7, int type) {
       break;
     case NID_pkcs7_encrypted:
       p7->type = obj;
-      PKCS7_ENCRYPT_free(p7->d.encrypted);
       p7->d.encrypted = PKCS7_ENCRYPT_new();
       if (p7->d.encrypted == NULL) {
         return 0;
@@ -748,6 +773,10 @@ BIO *PKCS7_dataInit(PKCS7 *p7, BIO *bio) {
   }
 
 
+  if (md_sk != NULL && sk_X509_ALGOR_num(md_sk) > SHRT_MAX) {
+    OPENSSL_PUT_ERROR(PKCS7, ERR_R_OVERFLOW);
+    goto err;
+  }
   for (size_t i = 0; i < sk_X509_ALGOR_num(md_sk); i++) {
     if (!pkcs7_bio_add_digest(&out, sk_X509_ALGOR_value(md_sk, i))) {
       goto err;
@@ -792,6 +821,9 @@ BIO *PKCS7_dataInit(PKCS7 *p7, BIO *bio) {
       }
       xalg->parameter->type = V_ASN1_OCTET_STRING;
       xalg->parameter->value.octet_string = ASN1_OCTET_STRING_new();
+      if (xalg->parameter->value.octet_string == NULL) {
+        goto err;
+      }
       // Set |p7|'s parameter value to the IV
       if (!ASN1_OCTET_STRING_set(xalg->parameter->value.octet_string, iv,
                                  ivlen)) {
@@ -1171,10 +1203,14 @@ err:
   return NULL;
 }
 
-static int pkcs7_decrypt_rinfo(unsigned char **ek_out, PKCS7_RECIP_INFO *ri,
-                               EVP_PKEY *pkey) {
+// pkcs7_decrypt_rinfo decrypts |ri|'s encrypted key into |*ek_out| and writes its
+// length to |*ek_len_out|. That length is not necessarily the content encryption
+// key length, so callers must check it.
+static int pkcs7_decrypt_rinfo(unsigned char **ek_out, size_t *ek_len_out,
+                               PKCS7_RECIP_INFO *ri, EVP_PKEY *pkey) {
   GUARD_PTR(ri);
   GUARD_PTR(ek_out);
+  GUARD_PTR(ek_len_out);
   unsigned char *ek = NULL;
   int ret = 0;
 
@@ -1198,10 +1234,12 @@ static int pkcs7_decrypt_rinfo(unsigned char **ek_out, PKCS7_RECIP_INFO *ri,
   if (!ok) {
     OPENSSL_free(ek);
     ek = NULL;
+    len = 0;
   }
 
   ret = 1;
   *ek_out = ek;
+  *ek_len_out = len;
 
 err:
   EVP_PKEY_CTX_free(ctx);
@@ -1233,6 +1271,7 @@ static BIO *pkcs7_data_decode(PKCS7 *p7, EVP_PKEY *pkey, X509 *pcert) {
   STACK_OF(PKCS7_RECIP_INFO) *rsk = NULL;
   PKCS7_RECIP_INFO *ri = NULL;
   uint8_t *cek = NULL, *dummy_key = NULL;  // cek means "content encryption key"
+  size_t cek_len = 0;
 
   if (p7->d.ptr == NULL) {
     OPENSSL_PUT_ERROR(PKCS7, PKCS7_R_NO_CONTENT);
@@ -1266,6 +1305,11 @@ static BIO *pkcs7_data_decode(PKCS7 *p7, EVP_PKEY *pkey, X509 *pcert) {
   // envelopedData must have data content to decrypt
   if (data_body == NULL) {
     OPENSSL_PUT_ERROR(PKCS7, PKCS7_R_NO_CONTENT);
+    goto err;
+  }
+
+  if (sk_PKCS7_RECIP_INFO_num(rsk) > SHRT_MAX) {
+    OPENSSL_PUT_ERROR(PKCS7, ERR_R_OVERFLOW);
     goto err;
   }
 
@@ -1306,7 +1350,7 @@ static BIO *pkcs7_data_decode(PKCS7 *p7, EVP_PKEY *pkey, X509 *pcert) {
     // |pkcs7_decrypt_rinfo| will only return false on critical failure, not
     // on decryption failure. Decryption check happens below, after we populate
     // |dummy_key| with random bytes.
-    if (!pkcs7_decrypt_rinfo(&cek, ri, pkey)) {
+    if (!pkcs7_decrypt_rinfo(&cek, &cek_len, ri, pkey)) {
       goto err;
     }
   } else {
@@ -1315,10 +1359,11 @@ static BIO *pkcs7_data_decode(PKCS7 *p7, EVP_PKEY *pkey, X509 *pcert) {
     for (size_t ii = 0; ii < sk_PKCS7_RECIP_INFO_num(rsk); ii++) {
       ri = sk_PKCS7_RECIP_INFO_value(rsk, ii);
       uint8_t *tmp_cek;
+      size_t tmp_cek_len;
       // |pkcs7_decrypt_rinfo| will only return false on critical failure, not
       // on decryption failure. Check whether |tmp_cek| is present after the
       // call to determine if decryption succeeded.
-      if (!pkcs7_decrypt_rinfo(&tmp_cek, ri, pkey)) {
+      if (!pkcs7_decrypt_rinfo(&tmp_cek, &tmp_cek_len, ri, pkey)) {
         goto err;
       }
       // OpenSSL sets encryption key to last successfully decrypted key. Copy
@@ -1326,6 +1371,7 @@ static BIO *pkcs7_data_decode(PKCS7 *p7, EVP_PKEY *pkey, X509 *pcert) {
       if (tmp_cek) {
         OPENSSL_free(cek);
         cek = tmp_cek;
+        cek_len = tmp_cek_len;
       }
     }
   }
@@ -1360,9 +1406,11 @@ static BIO *pkcs7_data_decode(PKCS7 *p7, EVP_PKEY *pkey, X509 *pcert) {
   }
   AWSLC_ABORT_IF_NOT_ONE(RAND_bytes(dummy_key, len));
   // At this point, null |cek| indicates that no content encryption key was
-  // successfully decrypted. We don't want to return early due to MMA. So, swap
-  // in the dummy key and proceed. Content decryption result will be gibberish.
-  if (cek == NULL) {
+  // successfully decrypted. A |cek_len| other than |len| is just as unusable, and
+  // signaling either would be an MMA distinguisher, so swap in the dummy key and
+  // proceed. Content decryption result will be gibberish.
+  if (cek == NULL || cek_len != (size_t)len) {
+    OPENSSL_free(cek);
     cek = dummy_key;
     dummy_key = NULL;
   }
@@ -1595,7 +1643,7 @@ static int pkcs7_signature_verify(BIO *in_bio, PKCS7 *p7, PKCS7_SIGNER_INFO *si,
       goto out;
     }
     if (message_digest->length != (int)md_len ||
-        OPENSSL_memcmp(message_digest->data, md_data, md_len) != 0) {
+        CRYPTO_memcmp(message_digest->data, md_data, md_len) != 0) {
       OPENSSL_PUT_ERROR(PKCS7, PKCS7_R_DIGEST_FAILURE);
       goto out;
     }
@@ -1665,6 +1713,10 @@ int PKCS7_verify(PKCS7 *p7, STACK_OF(X509) *certs, X509_STORE *store,
   STACK_OF(PKCS7_SIGNER_INFO) *sinfos = PKCS7_get_signer_info(p7);
   if (sinfos == NULL || sk_PKCS7_SIGNER_INFO_num(sinfos) == 0UL) {
     OPENSSL_PUT_ERROR(PKCS7, PKCS7_R_NO_SIGNATURES_ON_DATA);
+    goto out;
+  }
+  if (sk_PKCS7_SIGNER_INFO_num(sinfos) > SHRT_MAX) {
+    OPENSSL_PUT_ERROR(PKCS7, ERR_R_OVERFLOW);
     goto out;
   }
 

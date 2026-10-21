@@ -4,6 +4,7 @@
 #include <openssl/aead.h>
 
 #include <assert.h>
+#include <limits.h>
 
 #include <openssl/cipher.h>
 #include <openssl/err.h>
@@ -403,6 +404,7 @@ DEFINE_METHOD_FUNCTION(EVP_AEAD, EVP_aead_aes_128_ccm_bluetooth) {
   out->cleanup = aead_aes_ccm_cleanup;
   out->seal_scatter = aead_aes_ccm_seal_scatter;
   out->open_gather = aead_aes_ccm_open_gather;
+  out->copy = aead_ctx_copy_state_trivial;
 }
 
 static int aead_aes_ccm_bluetooth_8_init(EVP_AEAD_CTX *ctx, const uint8_t *key,
@@ -424,6 +426,7 @@ DEFINE_METHOD_FUNCTION(EVP_AEAD, EVP_aead_aes_128_ccm_bluetooth_8) {
   out->cleanup = aead_aes_ccm_cleanup;
   out->seal_scatter = aead_aes_ccm_seal_scatter;
   out->open_gather = aead_aes_ccm_open_gather;
+  out->copy = aead_ctx_copy_state_trivial;
 }
 
 static int aead_aes_ccm_matter_init(EVP_AEAD_CTX *ctx, const uint8_t *key,
@@ -444,6 +447,7 @@ DEFINE_METHOD_FUNCTION(EVP_AEAD, EVP_aead_aes_128_ccm_matter) {
   out->cleanup = aead_aes_ccm_cleanup;
   out->seal_scatter = aead_aes_ccm_seal_scatter;
   out->open_gather = aead_aes_ccm_open_gather;
+  out->copy = aead_ctx_copy_state_trivial;
 }
 
 #if defined(OPENSSL_32_BIT)
@@ -515,6 +519,12 @@ static int cipher_aes_ccm_cipher(EVP_CIPHER_CTX *ctx, uint8_t *out,
   }
 
   if (!cipher_ctx->iv_set || !cipher_ctx->key_set) {
+    return -1;
+  }
+
+  if (len > INT_MAX) {
+    // This function signature can only express up to |INT_MAX| bytes, matching
+    // the guard in the AES-GCM handler.
     return -1;
   }
 

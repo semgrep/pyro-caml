@@ -48,6 +48,11 @@ extern "C" {
 //
 // In the future, a replacement library will be available. Meanwhile, minimize
 // dependencies on this header where possible.
+//
+// Thread safety: Unlike other objects in this library, |X509| objects are not
+// yet safe for concurrent use by non-mutating functions (see
+// https://crbug.com/boringssl/407). Callers must not concurrently read and
+// mutate the same |X509| object without external synchronization.
 
 
 // Certificates.
@@ -5210,7 +5215,7 @@ typedef struct DIST_POINT_NAME_st {
     GENERAL_NAMES *fullname;
     STACK_OF(X509_NAME_ENTRY) *relativename;
   } name;
-  // If relativename then this contains the full distribution point name
+  // This field is unused and will be removed.
   X509_NAME *dpname;
 } DIST_POINT_NAME;
 

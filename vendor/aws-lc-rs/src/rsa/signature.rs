@@ -22,13 +22,18 @@ use untrusted::Input;
 
 #[allow(non_camel_case_types)]
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum RsaPadding {
     RSA_PKCS1_PADDING,
     RSA_PKCS1_PSS_PADDING,
 }
 
 /// Parameters for RSA verification.
+///
+/// Two values are equal when they denote the same verification algorithm, e.g.
+/// `RSA_PKCS1_2048_8192_SHA256`. Algorithms differing in digest algorithm,
+/// padding scheme or modulus size range compare unequal.
+#[derive(Eq, PartialEq)]
 pub struct RsaParameters(
     &'static digest::Algorithm,
     &'static RsaPadding,
@@ -79,6 +84,7 @@ impl ParsedVerificationAlgorithm for RsaParameters {
     ) -> Result<(), Unspecified> {
         let evp_pkey = public_key.key();
         verify_rsa_digest_signature(
+            self.digest_algorithm(),
             self.padding(),
             evp_pkey,
             digest,
@@ -126,11 +132,9 @@ impl VerificationAlgorithm for RsaParameters {
         digest: &Digest,
         signature: &[u8],
     ) -> Result<(), Unspecified> {
-        if self.digest_algorithm() != digest.algorithm() {
-            return Err(Unspecified);
-        }
         let evp_pkey = parse_rsa_public_key(public_key)?;
         verify_rsa_digest_signature(
+            self.digest_algorithm(),
             self.padding(),
             &evp_pkey,
             digest,
@@ -180,7 +184,7 @@ impl RsaParameters {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 #[allow(non_camel_case_types)]
 pub(crate) enum RsaVerificationAlgorithmId {
     RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY,
@@ -293,12 +297,18 @@ pub(crate) fn verify_rsa_signature(
 
 #[inline]
 pub(crate) fn verify_rsa_digest_signature(
+    algorithm: &'static digest::Algorithm,
     padding: &'static RsaPadding,
     public_key: &LcPtr<EVP_PKEY>,
     digest: &Digest,
     signature: &[u8],
     allowed_bit_size: &RangeInclusive<u32>,
 ) -> Result<(), Unspecified> {
+    // Enforced here so no caller can omit it; the ctx below is configured from `digest`.
+    if algorithm != digest.algorithm() {
+        return Err(Unspecified);
+    }
+
     if !allowed_bit_size.contains(&public_key.as_const().key_size_bits().try_into()?) {
         return Err(Unspecified);
     }

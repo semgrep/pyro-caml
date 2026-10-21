@@ -6,16 +6,12 @@ use crate::aws_lc::{
     EVP_PKEY_CTX_new_id, EVP_PKEY_bits, EVP_PKEY_cmp, EVP_PKEY_derive, EVP_PKEY_derive_init,
     EVP_PKEY_derive_set_peer, EVP_PKEY_get0_EC_KEY, EVP_PKEY_get0_RSA,
     EVP_PKEY_get_raw_private_key, EVP_PKEY_get_raw_public_key, EVP_PKEY_id, EVP_PKEY_keygen,
-    EVP_PKEY_keygen_init, EVP_PKEY_new_raw_private_key, EVP_PKEY_new_raw_public_key, EVP_PKEY_sign,
+    EVP_PKEY_keygen_init, EVP_PKEY_new_raw_private_key, EVP_PKEY_new_raw_public_key,
+    EVP_PKEY_pqdsa_new_raw_private_key, EVP_PKEY_pqdsa_new_raw_public_key, EVP_PKEY_sign,
     EVP_PKEY_sign_init, EVP_PKEY_size, EVP_PKEY_up_ref, EVP_PKEY_verify, EVP_PKEY_verify_init,
     EVP_marshal_private_key, EVP_marshal_private_key_v2, EVP_marshal_public_key,
     EVP_parse_private_key, EVP_parse_public_key, EC_KEY, EVP_PKEY, EVP_PKEY_CTX, EVP_PKEY_ED25519,
-    RSA,
-};
-#[cfg(all(feature = "unstable", not(feature = "fips")))]
-use crate::aws_lc::{
-    EVP_PKEY_pqdsa_new_raw_private_key, EVP_PKEY_pqdsa_new_raw_public_key, EVP_PKEY_PQDSA,
-    NID_MLDSA44, NID_MLDSA65, NID_MLDSA87,
+    EVP_PKEY_PQDSA, NID_MLDSA44, NID_MLDSA65, NID_MLDSA87, RSA,
 };
 use crate::cbb::LcCBB;
 use crate::digest::digest_ctx::DigestContext;
@@ -27,6 +23,7 @@ use crate::ptr::{ConstPointer, LcPtr};
 use crate::{cbs, digest};
 use core::ffi::c_int;
 use std::ptr::{null, null_mut};
+use zeroize::Zeroizing;
 
 impl PartialEq<Self> for LcPtr<EVP_PKEY> {
     /// Only compares params and public key
@@ -247,8 +244,12 @@ impl LcPtr<EVP_PKEY> {
     #[allow(non_snake_case)]
     pub(crate) fn create_EVP_PKEY_CTX(&self) -> Result<LcPtr<EVP_PKEY_CTX>, ()> {
         // The only modification made by EVP_PKEY_CTX_new to `priv_key` is to increment its
-        // refcount. The modification is made while holding a global lock:
-        // https://github.com/aws/aws-lc/blob/61503f7fe72457e12d3446853a5452d175560c49/crypto/refcount_lock.c#L29
+        // refcount. AWS-LC's refcount operations are thread-safe: lock-free `_Atomic` CAS on the
+        // C11-atomic build, `InterlockedIncrement`-style atomics on Windows, and a mutex-protected
+        // fallback otherwise. See:
+        // https://github.com/aws/aws-lc/blob/main/crypto/refcount_c11.c
+        // https://github.com/aws/aws-lc/blob/main/crypto/refcount_win.c
+        // https://github.com/aws/aws-lc/blob/main/crypto/refcount_lock.c
         LcPtr::new(unsafe { EVP_PKEY_CTX_new(self.as_mut_unsafe_ptr(), null_mut()) })
     }
 
@@ -256,7 +257,6 @@ impl LcPtr<EVP_PKEY> {
         bytes: &[u8],
         evp_pkey_type: c_int,
     ) -> Result<Self, KeyRejected> {
-        #[cfg(all(feature = "unstable", not(feature = "fips")))]
         if evp_pkey_type == EVP_PKEY_PQDSA {
             return match bytes.len() {
                 2560 => Self::new(unsafe {
@@ -283,7 +283,6 @@ impl LcPtr<EVP_PKEY> {
         bytes: &[u8],
         evp_pkey_type: c_int,
     ) -> Result<Self, KeyRejected> {
-        #[cfg(all(feature = "unstable", not(feature = "fips")))]
         if evp_pkey_type == EVP_PKEY_PQDSA {
             return match bytes.len() {
                 1312 => Self::new(unsafe {
@@ -509,7 +508,7 @@ impl LcPtr<EVP_PKEY> {
         }
     }
 
-    pub(crate) fn agree(&self, peer_key: &mut Self) -> Result<Box<[u8]>, Unspecified> {
+    pub(crate) fn agree(&self, peer_key: &mut Self) -> Result<Zeroizing<Vec<u8>>, Unspecified> {
         let mut pctx = self.create_EVP_PKEY_CTX()?;
 
         if 1 != unsafe { EVP_PKEY_derive_init(pctx.as_mut_ptr()) } {
@@ -525,15 +524,17 @@ impl LcPtr<EVP_PKEY> {
             return Err(Unspecified);
         }
 
-        let mut secret = vec![0u8; secret_len];
+        // Own the allocation before the fallible derive call so every exit path scrubs it.
+        let mut secret = Zeroizing::new(vec![0u8; secret_len]);
         if 1 != indicator_check!(unsafe {
             EVP_PKEY_derive(pctx.as_mut_ptr(), secret.as_mut_ptr(), &mut secret_len)
         }) {
             return Err(Unspecified);
         }
+        // Preserve the allocation so `Zeroizing` can scrub its full capacity.
         secret.truncate(secret_len);
 
-        Ok(secret.into_boxed_slice())
+        Ok(secret)
     }
 
     pub(crate) fn generate<F>(pkey_type: c_int, params_fn: Option<F>) -> Result<Self, Unspecified>
@@ -562,13 +563,53 @@ impl LcPtr<EVP_PKEY> {
 
 impl Clone for LcPtr<EVP_PKEY> {
     fn clone(&self) -> Self {
-        // EVP_PKEY_up_ref increments the refcount while holding a global lock:
-        // https://github.com/aws/aws-lc/blob/61503f7fe72457e12d3446853a5452d175560c49/crypto/refcount_lock.c#L29
+        // EVP_PKEY_up_ref increments the refcount using AWS-LC's thread-safe refcount
+        // implementation: lock-free `_Atomic` CAS on the C11-atomic build, `InterlockedIncrement`-
+        // style atomics on Windows, and a mutex-protected fallback otherwise. See:
+        // https://github.com/aws/aws-lc/blob/main/crypto/refcount_c11.c
+        // https://github.com/aws/aws-lc/blob/main/crypto/refcount_win.c
+        // https://github.com/aws/aws-lc/blob/main/crypto/refcount_lock.c
         assert_eq!(
             1,
             unsafe { EVP_PKEY_up_ref(self.as_mut_unsafe_ptr()) },
             "infallible AWS-LC function"
         );
         Self::new(unsafe { self.as_mut_unsafe_ptr() }).expect("non-null AWS-LC EVP_PKEY pointer")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aws_lc::EVP_PKEY_X25519;
+
+    fn generate_ed25519() -> LcPtr<EVP_PKEY> {
+        LcPtr::<EVP_PKEY>::generate(EVP_PKEY_ED25519, No_EVP_PKEY_CTX_consumer)
+            .expect("ed25519 keygen")
+    }
+
+    fn generate_x25519() -> LcPtr<EVP_PKEY> {
+        LcPtr::<EVP_PKEY>::generate(EVP_PKEY_X25519, No_EVP_PKEY_CTX_consumer)
+            .expect("x25519 keygen")
+    }
+
+    #[test]
+    fn agree_computes_matching_shared_secret_from_both_sides() {
+        let mut key_a = generate_x25519();
+        let mut key_b = generate_x25519();
+
+        let secret_ab = key_a.agree(&mut key_b).expect("agree a->b");
+        let secret_ba = key_b.agree(&mut key_a).expect("agree b->a");
+
+        assert!(!secret_ab.is_empty());
+        assert_eq!(secret_ab.as_slice(), secret_ba.as_slice());
+    }
+
+    #[test]
+    fn agree_rejects_mismatched_key_types() {
+        let x25519_key = generate_x25519();
+        let mut ed25519_key = generate_ed25519();
+
+        assert!(x25519_key.agree(&mut ed25519_key).is_err());
     }
 }

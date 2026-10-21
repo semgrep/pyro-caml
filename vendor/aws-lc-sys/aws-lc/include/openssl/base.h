@@ -57,7 +57,7 @@ extern "C" {
 // A consumer may use this symbol in the preprocessor to temporarily build
 // against multiple revisions of BoringSSL at the same time. It is not
 // recommended to do so for longer than is necessary.
-#define AWSLC_API_VERSION 35
+#define AWSLC_API_VERSION 37
 
 // This string tracks the most current production release version on Github
 // https://github.com/aws/aws-lc/releases.
@@ -65,7 +65,12 @@ extern "C" {
 // ServiceIndicatorTest.AWSLCVersionString
 // Note: there are two versions of this test. Only one test is compiled
 // depending on FIPS mode.
-#define AWSLC_VERSION_NUMBER_STRING "1.73.0"
+#define AWSLC_VERSION_NUMBER_STRING "5.11.0"
+
+// AWSLC_FIPS_VERSION_NUMBER is the FIPS version number of mainline AWS-LC,
+// independent of |AWSLC_VERSION_NUMBER_STRING|. It is incremented each time a
+// new FIPS branch is cut from mainline.
+#define AWSLC_FIPS_VERSION_NUMBER 5
 
 #if defined(BORINGSSL_SHARED_LIBRARY)
 

@@ -40,12 +40,13 @@ OPENSSL_MSVC_PRAGMA(warning(pop))
 #include "../test/wycheproof_util.h"
 
 
-// evp_test dispatches between multiple test types. PrivateKey tests take a key
-// name parameter and single block, decode it as a PEM private key, and save it
-// under that key name. Decrypt, Sign, and Verify tests take a previously
-// imported key name as parameter and test their respective operations.
+// evp_test dispatches between multiple test types. PublicKey and PrivateKey
+// tests take a key name parameter and key information. If the test is
+// successful, the key is saved under that key name. Decrypt, Sign, and Verify
+// tests take a previously imported key name as parameter and test their
+// respective operations.
 
-static const EVP_MD *GetDigest(FileTest *t, const std::string &name) {
+static const EVP_MD *GetDigest(const std::string &name) {
   if (name == "MD5") {
     return EVP_md5();
   } else if (name == "SHA1") {
@@ -79,7 +80,7 @@ static const EVP_MD *GetDigest(FileTest *t, const std::string &name) {
   return nullptr;
 }
 
-static int GetKeyType(FileTest *t, const std::string &name) {
+static int GetKeyType(const std::string &name) {
   if (name == "RSA") {
     return EVP_PKEY_RSA;
   }
@@ -122,115 +123,250 @@ static bool GetRSAPadding(FileTest *t, int *out, const std::string &name) {
 
 using KeyMap = std::map<std::string, bssl::UniquePtr<EVP_PKEY>>;
 
-static bool ImportKey(FileTest *t, KeyMap *key_map,
-                      EVP_PKEY *(*parse_func)(CBS *cbs),
+enum class KeyRole { kPublic, kPrivate };
+
+static void CheckRSAParam(FileTest *t, const std::string &attr_name,
+                          const EVP_PKEY *pkey,
+                          const BIGNUM *(*rsa_getter)(const RSA *)) {
+  SCOPED_TRACE(attr_name);
+  if (t->HasAttribute(attr_name)) {
+    bssl::UniquePtr<BIGNUM> want =
+        HexToBIGNUM(t->GetAttributeOrDie(attr_name).c_str());
+    ASSERT_TRUE(want);
+
+    const RSA *rsa = EVP_PKEY_get0_RSA(pkey);
+    ASSERT_TRUE(rsa);
+    const BIGNUM *got = rsa_getter(rsa);
+    ASSERT_TRUE(got);
+    EXPECT_EQ(BN_cmp(want.get(), got), 0)
+        << "wanted: " << BIGNUMToHex(want.get())
+        << "\ngot: " << BIGNUMToHex(got);
+  }
+  // We have many test RSA keys so, for now, don't require that all RSA keys
+  // list out these parameters. That is, the absence of an RSA parameter does
+  // not currently assert that we omit them.
+}
+
+static bool ImportKey(FileTest *t, KeyMap *key_map, KeyRole key_role,
                       int (*marshal_func)(CBB *cbb, const EVP_PKEY *key)) {
+  auto parse_func = key_role == KeyRole::kPublic ? &EVP_parse_public_key
+                                                 : &EVP_parse_private_key;
+  if (key_role == KeyRole::kPublic) {
+    marshal_func = &EVP_marshal_public_key;
+  }
+
+  // This test will first import the key from all available methods, then check
+  // that all properties on all keys match.
+  std::vector<std::pair<std::string, bssl::UniquePtr<EVP_PKEY>>> keys;
+
+  // Parse from SPKI or PKCS#8.
   std::vector<uint8_t> input;
   if (!t->GetBytes(&input, "Input")) {
     return false;
   }
-
   CBS cbs;
   CBS_init(&cbs, input.data(), input.size());
-  bssl::UniquePtr<EVP_PKEY> pkey(parse_func(&cbs));
-  if (!pkey) {
+  bssl::UniquePtr<EVP_PKEY> new_key(parse_func(&cbs));
+  if (new_key == nullptr || CBS_len(&cbs) != 0) {
     return false;
   }
+  keys.emplace_back(key_role == KeyRole::kPublic ? "spki" : "pkcs8",
+                    std::move(new_key));
 
-  std::string key_type;
-  if (!t->GetAttribute(&key_type, "Type")) {
+  std::string key_type_str;
+  if (!t->GetAttribute(&key_type_str, "Type")) {
     return false;
   }
-  EXPECT_EQ(GetKeyType(t, key_type), EVP_PKEY_id(pkey.get()));
+  int key_type = GetKeyType(key_type_str);
 
-  if (EVP_PKEY_id(pkey.get()) == EVP_PKEY_EC) {
-    EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(pkey.get());
-    OPENSSL_BEGIN_ALLOW_DEPRECATED
-    if (t->HasAttribute("ExpectFromExplicitParams")) {
-      EXPECT_EQ(1, EC_KEY_decoded_from_explicit_params(ec_key));
+  // Import as a raw key.
+  if (key_role == KeyRole::kPublic && t->HasAttribute("RawPublic")) {
+    std::vector<uint8_t> raw;
+    if (!t->GetBytes(&raw, "RawPublic")) {
+      return false;
+    }
+    new_key.reset(
+        EVP_PKEY_new_raw_public_key(key_type, nullptr, raw.data(), raw.size()));
+    if (new_key == nullptr) {
+      return false;
+    }
+    keys.emplace_back("raw public", std::move(new_key));
+  }
+  if (key_role == KeyRole::kPrivate && t->HasAttribute("RawPrivate")) {
+    std::vector<uint8_t> raw;
+    if (!t->GetBytes(&raw, "RawPrivate")) {
+      return false;
+    }
+    new_key.reset(EVP_PKEY_new_raw_private_key(key_type, nullptr, raw.data(),
+                                               raw.size()));
+    if (new_key == nullptr) {
+      return false;
+    }
+    keys.emplace_back("raw private", std::move(new_key));
+  }
+
+  // Import RSA key from parameters.
+  if (key_type == EVP_PKEY_RSA) {
+    if (key_role == KeyRole::kPublic && t->HasAttribute("RSAParamN") &&
+        t->HasAttribute("RSAParamE")) {
+      bssl::UniquePtr<BIGNUM> n =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamN").c_str());
+      bssl::UniquePtr<BIGNUM> e =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamE").c_str());
+      if (n == nullptr || e == nullptr) {
+        return false;
+      }
+      bssl::UniquePtr<RSA> rsa(RSA_new_public_key(n.get(), e.get()));
+      new_key.reset(EVP_PKEY_new());
+      if (rsa == nullptr || new_key == nullptr ||
+          !EVP_PKEY_set1_RSA(new_key.get(), rsa.get())) {
+        return false;
+      }
+      keys.emplace_back("RSA public params", std::move(new_key));
+    }
+    if (key_role == KeyRole::kPrivate && t->HasAttribute("RSAParamN") &&
+        t->HasAttribute("RSAParamE") && t->HasAttribute("RSAParamD") &&
+        t->HasAttribute("RSAParamP") && t->HasAttribute("RSAParamQ") &&
+        t->HasAttribute("RSAParamDMP1") && t->HasAttribute("RSAParamDMQ1") &&
+        t->HasAttribute("RSAParamIQMP")) {
+      bssl::UniquePtr<BIGNUM> n =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamN").c_str());
+      bssl::UniquePtr<BIGNUM> e =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamE").c_str());
+      bssl::UniquePtr<BIGNUM> d =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamD").c_str());
+      bssl::UniquePtr<BIGNUM> p =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamP").c_str());
+      bssl::UniquePtr<BIGNUM> q =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamQ").c_str());
+      bssl::UniquePtr<BIGNUM> dmp1 =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamDMP1").c_str());
+      bssl::UniquePtr<BIGNUM> dmq1 =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamDMQ1").c_str());
+      bssl::UniquePtr<BIGNUM> iqmp =
+          HexToBIGNUM(t->GetAttributeOrDie("RSAParamIQMP").c_str());
+      if (n == nullptr || e == nullptr) {
+        return false;
+      }
+      bssl::UniquePtr<RSA> rsa(RSA_new_private_key(n.get(), e.get(), d.get(),
+                                                   p.get(), q.get(), dmp1.get(),
+                                                   dmq1.get(), iqmp.get()));
+      new_key.reset(EVP_PKEY_new());
+      if (rsa == nullptr || new_key == nullptr ||
+          !EVP_PKEY_set1_RSA(new_key.get(), rsa.get())) {
+        return false;
+      }
+      keys.emplace_back("RSA private params", std::move(new_key));
+    }
+  }
+
+  // Check properties of the keys.
+  for (const auto &entry : keys) {
+    const std::string &name = entry.first;
+    const bssl::UniquePtr<EVP_PKEY> &pkey = entry.second;
+    SCOPED_TRACE(name);
+
+    EXPECT_EQ(key_type, EVP_PKEY_id(pkey.get()));
+
+    if (t->HasAttribute("Bits")) {
+      EXPECT_EQ(EVP_PKEY_bits(pkey.get()),
+                atoi(t->GetAttributeOrDie("Bits").c_str()));
+    }
+
+    if (EVP_PKEY_id(pkey.get()) == EVP_PKEY_EC) {
+      EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(pkey.get());
+      OPENSSL_BEGIN_ALLOW_DEPRECATED
+      if (t->HasAttribute("ExpectFromExplicitParams")) {
+        EXPECT_EQ(1, EC_KEY_decoded_from_explicit_params(ec_key));
+      } else {
+        EXPECT_EQ(0, EC_KEY_decoded_from_explicit_params(ec_key));
+      }
+      OPENSSL_END_ALLOW_DEPRECATED
+    }
+
+    CheckRSAParam(t, "RSAParamN", pkey.get(), RSA_get0_n);
+    CheckRSAParam(t, "RSAParamE", pkey.get(), RSA_get0_e);
+    CheckRSAParam(t, "RSAParamD", pkey.get(), RSA_get0_d);
+    CheckRSAParam(t, "RSAParamP", pkey.get(), RSA_get0_p);
+    CheckRSAParam(t, "RSAParamQ", pkey.get(), RSA_get0_q);
+    CheckRSAParam(t, "RSAParamDMP1", pkey.get(), RSA_get0_dmp1);
+    CheckRSAParam(t, "RSAParamDMQ1", pkey.get(), RSA_get0_dmq1);
+    CheckRSAParam(t, "RSAParamIQMP", pkey.get(), RSA_get0_iqmp);
+
+    // All keys must compare equal.
+    EXPECT_EQ(EVP_PKEY_cmp(pkey.get(), keys.front().second.get()), 1);
+
+    // The key must re-encode correctly.
+    bssl::ScopedCBB cbb;
+    if (!CBB_init(cbb.get(), 0) || !marshal_func(cbb.get(), pkey.get())) {
+      return false;
+    }
+    std::vector<uint8_t> output = input;
+    if (t->HasAttribute("Output") && !t->GetBytes(&output, "Output")) {
+      return false;
+    }
+    EXPECT_EQ(Bytes(output), Bytes(CBB_data(cbb.get()), CBB_len(cbb.get())))
+        << "Re-encoding the key did not match.";
+
+    if (t->HasAttribute("RawPrivate")) {
+      std::vector<uint8_t> expected;
+      if (!t->GetBytes(&expected, "RawPrivate")) {
+        return false;
+      }
+
+      std::vector<uint8_t> raw;
+      size_t len;
+      if (!EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &len)) {
+        return false;
+      }
+      raw.resize(len);
+      if (!EVP_PKEY_get_raw_private_key(pkey.get(), raw.data(), &len)) {
+        return false;
+      }
+      raw.resize(len);
+      EXPECT_EQ(Bytes(raw), Bytes(expected));
+
+      // Short buffers should be rejected.
+      raw.resize(len - 1);
+      len = raw.size();
+      EXPECT_FALSE(EVP_PKEY_get_raw_private_key(pkey.get(), raw.data(), &len));
     } else {
-      EXPECT_EQ(0, EC_KEY_decoded_from_explicit_params(ec_key));
-    }
-    OPENSSL_END_ALLOW_DEPRECATED
-  }
-
-  // The key must re-encode correctly.
-  bssl::ScopedCBB cbb;
-  uint8_t *der;
-  size_t der_len;
-  if (!CBB_init(cbb.get(), 0) ||
-      !marshal_func(cbb.get(), pkey.get()) ||
-      !CBB_finish(cbb.get(), &der, &der_len)) {
-    return false;
-  }
-  bssl::UniquePtr<uint8_t> free_der(der);
-
-  std::vector<uint8_t> output = input;
-  if (t->HasAttribute("Output") &&
-      !t->GetBytes(&output, "Output")) {
-    return false;
-  }
-  EXPECT_EQ(Bytes(output), Bytes(der, der_len))
-      << "Re-encoding the key did not match.";
-
-  if (t->HasAttribute("ExpectNoRawPrivate")) {
-    size_t len;
-    EXPECT_FALSE(EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &len));
-  } else if (t->HasAttribute("ExpectRawPrivate")) {
-    std::vector<uint8_t> expected;
-    if (!t->GetBytes(&expected, "ExpectRawPrivate")) {
-      return false;
+      size_t len;
+      EXPECT_FALSE(EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &len));
     }
 
-    std::vector<uint8_t> raw;
-    size_t len;
-    if (!EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &len)) {
-      return false;
-    }
-    raw.resize(len);
-    if (!EVP_PKEY_get_raw_private_key(pkey.get(), raw.data(), &len)) {
-      return false;
-    }
-    raw.resize(len);
-    EXPECT_EQ(Bytes(raw), Bytes(expected));
+    if (t->HasAttribute("RawPublic")) {
+      std::vector<uint8_t> expected;
+      if (!t->GetBytes(&expected, "RawPublic")) {
+        return false;
+      }
 
-    // Short buffers should be rejected.
-    raw.resize(len - 1);
-    len = raw.size();
-    EXPECT_FALSE(EVP_PKEY_get_raw_private_key(pkey.get(), raw.data(), &len));
-  }
+      std::vector<uint8_t> raw;
+      size_t len;
+      if (!EVP_PKEY_get_raw_public_key(pkey.get(), nullptr, &len)) {
+        return false;
+      }
+      raw.resize(len);
+      if (!EVP_PKEY_get_raw_public_key(pkey.get(), raw.data(), &len)) {
+        return false;
+      }
+      raw.resize(len);
+      EXPECT_EQ(Bytes(raw), Bytes(expected));
 
-  if (t->HasAttribute("ExpectNoRawPublic")) {
-    size_t len;
-    EXPECT_FALSE(EVP_PKEY_get_raw_public_key(pkey.get(), nullptr, &len));
-  } else if (t->HasAttribute("ExpectRawPublic")) {
-    std::vector<uint8_t> expected;
-    if (!t->GetBytes(&expected, "ExpectRawPublic")) {
-      return false;
+      // Short buffers should be rejected.
+      raw.resize(len - 1);
+      len = raw.size();
+      EXPECT_FALSE(EVP_PKEY_get_raw_public_key(pkey.get(), raw.data(), &len));
+    } else {
+      size_t len;
+      EXPECT_FALSE(EVP_PKEY_get_raw_public_key(pkey.get(), nullptr, &len));
     }
-
-    std::vector<uint8_t> raw;
-    size_t len;
-    if (!EVP_PKEY_get_raw_public_key(pkey.get(), nullptr, &len)) {
-      return false;
-    }
-    raw.resize(len);
-    if (!EVP_PKEY_get_raw_public_key(pkey.get(), raw.data(), &len)) {
-      return false;
-    }
-    raw.resize(len);
-    EXPECT_EQ(Bytes(raw), Bytes(expected));
-
-    // Short buffers should be rejected.
-    raw.resize(len - 1);
-    len = raw.size();
-    EXPECT_FALSE(EVP_PKEY_get_raw_public_key(pkey.get(), raw.data(), &len));
   }
 
   // Save the key for future tests.
   const std::string &key_name = t->GetParameter();
   EXPECT_EQ(0u, key_map->count(key_name)) << "Duplicate key: " << key_name;
-  (*key_map)[key_name] = std::move(pkey);
+  (*key_map)[key_name] = std::move(keys.front().second);
   return true;
 }
 
@@ -304,13 +440,13 @@ static bool SetupContext(FileTest *t, KeyMap *key_map, EVP_PKEY_CTX *ctx) {
     return false;
   }
   if (t->HasAttribute("MGF1Digest")) {
-    const EVP_MD *digest = GetDigest(t, t->GetAttributeOrDie("MGF1Digest"));
+    const EVP_MD *digest = GetDigest(t->GetAttributeOrDie("MGF1Digest"));
     if (digest == nullptr || !EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, digest)) {
       return false;
     }
   }
   if (t->HasAttribute("OAEPDigest")) {
-    const EVP_MD *digest = GetDigest(t, t->GetAttributeOrDie("OAEPDigest"));
+    const EVP_MD *digest = GetDigest(t->GetAttributeOrDie("OAEPDigest"));
     if (digest == nullptr || !EVP_PKEY_CTX_set_rsa_oaep_md(ctx, digest)) {
       return false;
     }
@@ -439,11 +575,11 @@ static bool TestEVP(FileTest *t, KeyMap *key_map) {
         return false;
       }
     }
-    return ImportKey(t, key_map, EVP_parse_private_key, marshal_func);
+    return ImportKey(t, key_map, KeyRole::kPrivate, marshal_func);
   }
 
   if (t->GetType() == "PublicKey") {
-    return ImportKey(t, key_map, EVP_parse_public_key, EVP_marshal_public_key);
+    return ImportKey(t, key_map, KeyRole::kPublic, EVP_marshal_public_key);
   }
 
   if (t->GetType() == "DHKey") {
@@ -490,7 +626,7 @@ static bool TestEVP(FileTest *t, KeyMap *key_map) {
 
   const EVP_MD *digest = nullptr;
   if (t->HasAttribute("Digest")) {
-    digest = GetDigest(t, t->GetAttributeOrDie("Digest"));
+    digest = GetDigest(t->GetAttributeOrDie("Digest"));
     if (digest == nullptr) {
       return false;
     }
@@ -793,6 +929,25 @@ TEST(EVPTest, WycheproofECDSAsecp256k1) {
       "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_secp256k1_sha256_test.txt");
   RunWycheproofVerifyTest(
       "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_secp256k1_sha512_test.txt");
+}
+
+//= third_party/vectors/vectors_spec.md#wycheproof
+//# AWS-LC MUST test against `testvectors_v1/ecdsa_brainpoolP224r1_sha224_test.txt`.
+//# AWS-LC MUST test against `testvectors_v1/ecdsa_brainpoolP256r1_sha256_test.txt`.
+//# AWS-LC MUST test against `testvectors_v1/ecdsa_brainpoolP320r1_sha384_test.txt`.
+//# AWS-LC MUST test against `testvectors_v1/ecdsa_brainpoolP384r1_sha384_test.txt`.
+//# AWS-LC MUST test against `testvectors_v1/ecdsa_brainpoolP512r1_sha512_test.txt`.
+TEST(EVPTest, WycheproofECDSABrainpool) {
+  RunWycheproofVerifyTest(
+      "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_brainpoolP224r1_sha224_test.txt");
+  RunWycheproofVerifyTest(
+      "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_brainpoolP256r1_sha256_test.txt");
+  RunWycheproofVerifyTest(
+      "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_brainpoolP320r1_sha384_test.txt");
+  RunWycheproofVerifyTest(
+      "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_brainpoolP384r1_sha384_test.txt");
+  RunWycheproofVerifyTest(
+      "third_party/vectors/converted/wycheproof/testvectors_v1/ecdsa_brainpoolP512r1_sha512_test.txt");
 }
 
 //= third_party/vectors/vectors_spec.md#wycheproof
@@ -1367,8 +1522,81 @@ TEST(EVPTest, ECTLSEncodedPoint) {
       NID_secp521r1 // curve_nid
     };
 
+    // secp256k1 test vector, taken from Wycheproof ecdh_secp256k1_test.json
+    // (tcId 1, "normal case")
+    static const uint8_t kSecp256k1PublicKey[] = {
+      /* uncompressed */
+      0x04,
+      /* x-coordinate */
+      0xd8, 0x09, 0x6a, 0xf8, 0xa1, 0x1e, 0x0b, 0x80, 0x03, 0x7e, 0x1e, 0xe6,
+      0x82, 0x46, 0xb5, 0xdc, 0xbb, 0x0a, 0xeb, 0x1c, 0xf1, 0x24, 0x4f, 0xd7,
+      0x67, 0xdb, 0x80, 0xf3, 0xfa, 0x27, 0xda, 0x2b,
+      /* y-coordinate */
+      0x39, 0x68, 0x12, 0xea, 0x16, 0x86, 0xe7, 0x47, 0x2e, 0x96, 0x92, 0xea,
+      0xf3, 0xe9, 0x58, 0xe5, 0x0e, 0x95, 0x00, 0xd3, 0xb4, 0xc7, 0x72, 0x43,
+      0xdb, 0x1f, 0x2a, 0xcd, 0x67, 0xba, 0x9c, 0xc4
+    };
+    static const uint8_t kSecp256k1PrivateKey[] = {
+      0xf4, 0xb7, 0xff, 0x7c, 0xcc, 0xc9, 0x88, 0x13, 0xa6, 0x9f, 0xae, 0x3d,
+      0xf2, 0x22, 0xbf, 0xe3, 0xf4, 0xe2, 0x8f, 0x76, 0x4b, 0xf9, 0x1b, 0x4a,
+      0x10, 0xd8, 0x09, 0x6c, 0xe4, 0x46, 0xb2, 0x54
+    };
+    static const uint8_t kSecp256k1ExpectedSharedSecret[] = {
+      0x54, 0x4d, 0xfa, 0xe2, 0x2a, 0xf6, 0xaf, 0x93, 0x90, 0x42, 0xb1, 0xd8,
+      0x5b, 0x71, 0xa1, 0xe4, 0x9e, 0x9a, 0x56, 0x14, 0x12, 0x3c, 0x4d, 0x6a,
+      0xd0, 0xc8, 0xaf, 0x65, 0xba, 0xf8, 0x7d, 0x65
+    };
+
+    struct ectlsencodedpoint_test_data secp256k1_test_data = {
+      kSecp256k1PublicKey, // public_key
+      (1 + 32 + 32), // public_key_size
+      kSecp256k1PrivateKey, // private_key
+      32, // private_key_size
+      kSecp256k1ExpectedSharedSecret, // expected_shared_secret
+      32, // expected_shared_secret_size
+      EVP_PKEY_EC, // key_type
+      NID_secp256k1 // curve_nid
+    };
+
+    // brainpoolP256r1 test vector, taken from RFC 7027 Section A.1
+    // (Alice's private key dA with Bob's public key Q_B)
+    static const uint8_t kBrainpoolP256r1PublicKey[] = {
+      /* uncompressed */
+      0x04,
+      /* x-coordinate (x_qB) */
+      0x8d, 0x2d, 0x68, 0x8c, 0x6c, 0xf9, 0x3e, 0x11, 0x60, 0xad, 0x04, 0xcc,
+      0x44, 0x29, 0x11, 0x7d, 0xc2, 0xc4, 0x18, 0x25, 0xe1, 0xe9, 0xfc, 0xa0,
+      0xad, 0xdd, 0x34, 0xe6, 0xf1, 0xb3, 0x9f, 0x7b,
+      /* y-coordinate (y_qB) */
+      0x99, 0x0c, 0x57, 0x52, 0x08, 0x12, 0xbe, 0x51, 0x26, 0x41, 0xe4, 0x70,
+      0x34, 0x83, 0x21, 0x06, 0xbc, 0x7d, 0x3e, 0x8d, 0xd0, 0xe4, 0xc7, 0xf1,
+      0x13, 0x6d, 0x70, 0x06, 0x54, 0x7c, 0xec, 0x6a
+    };
+    static const uint8_t kBrainpoolP256r1PrivateKey[] = {
+      0x81, 0xdb, 0x1e, 0xe1, 0x00, 0x15, 0x0f, 0xf2, 0xea, 0x33, 0x8d, 0x70,
+      0x82, 0x71, 0xbe, 0x38, 0x30, 0x0c, 0xb5, 0x42, 0x41, 0xd7, 0x99, 0x50,
+      0xf7, 0x7b, 0x06, 0x30, 0x39, 0x80, 0x4f, 0x1d
+    };
+    static const uint8_t kBrainpoolP256r1ExpectedSharedSecret[] = {
+      0x89, 0xaf, 0xc3, 0x9d, 0x41, 0xd3, 0xb3, 0x27, 0x81, 0x4b, 0x80, 0x94,
+      0x0b, 0x04, 0x25, 0x90, 0xf9, 0x65, 0x56, 0xec, 0x91, 0xe6, 0xae, 0x79,
+      0x39, 0xbc, 0xe3, 0x1f, 0x3a, 0x18, 0xbf, 0x2b
+    };
+
+    struct ectlsencodedpoint_test_data brainpool_p256r1_test_data = {
+      kBrainpoolP256r1PublicKey, // public_key
+      (1 + 32 + 32), // public_key_size
+      kBrainpoolP256r1PrivateKey, // private_key
+      32, // private_key_size
+      kBrainpoolP256r1ExpectedSharedSecret, // expected_shared_secret
+      32, // expected_shared_secret_size
+      EVP_PKEY_EC, // key_type
+      NID_brainpoolP256r1 // curve_nid
+    };
+
     ectlsencodedpoint_test_data test_data_all[] = {x25519_test_data,
-      p224_test_data, p256_test_data, p384_test_data, p521_test_data};
+      p224_test_data, p256_test_data, p384_test_data, p521_test_data,
+      secp256k1_test_data, brainpool_p256r1_test_data};
 
     uint8_t *output = nullptr;
     uint8_t *shared_secret = nullptr;
@@ -1885,4 +2113,63 @@ TEST(EVPTest, Ed25519phTestVectors) {
     ASSERT_TRUE(EVP_DigestVerifyFinal(md_ctx.get(), signature,
                                       signature_len));
   });
+}
+
+TEST(EVPTest, SignUndersizedBuffer) {
+  // EC: undersized buffer should be rejected.
+  {
+    bssl::UniquePtr<EC_KEY> ec(EC_KEY_new_by_curve_name(NID_X9_62_prime256v1));
+    ASSERT_TRUE(ec);
+    ASSERT_TRUE(EC_KEY_generate_key(ec.get()));
+    bssl::UniquePtr<EVP_PKEY> key(EVP_PKEY_new());
+    ASSERT_TRUE(key);
+    ASSERT_TRUE(EVP_PKEY_set1_EC_KEY(key.get(), ec.get()));
+
+    uint8_t digest[32] = {0};
+    bssl::UniquePtr<EVP_PKEY_CTX> ctx(EVP_PKEY_CTX_new(key.get(), nullptr));
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(EVP_PKEY_sign_init(ctx.get()));
+
+    size_t siglen = 0;
+    ASSERT_EQ(1, EVP_PKEY_sign(ctx.get(), NULL, &siglen, digest, 32));
+    ASSERT_GT(siglen, (size_t)0);
+
+    std::vector<uint8_t> sig(siglen);
+    size_t too_small = 1;
+    EXPECT_FALSE(EVP_PKEY_sign(ctx.get(), sig.data(), &too_small, digest, 32));
+    EXPECT_EQ(EVP_R_BUFFER_TOO_SMALL,
+              ERR_GET_REASON(ERR_peek_last_error()));
+    ERR_clear_error();
+  }
+
+  // RSA: undersized buffer should be rejected.
+  {
+    bssl::UniquePtr<RSA> rsa(RSA_new());
+    ASSERT_TRUE(rsa);
+    bssl::UniquePtr<BIGNUM> e(BN_new());
+    ASSERT_TRUE(e);
+    ASSERT_TRUE(BN_set_word(e.get(), RSA_F4));
+    ASSERT_TRUE(RSA_generate_key_ex(rsa.get(), 2048, e.get(), nullptr));
+    bssl::UniquePtr<EVP_PKEY> key(EVP_PKEY_new());
+    ASSERT_TRUE(key);
+    ASSERT_TRUE(EVP_PKEY_set1_RSA(key.get(), rsa.get()));
+
+    uint8_t digest[32] = {0};
+    bssl::UniquePtr<EVP_PKEY_CTX> ctx(EVP_PKEY_CTX_new(key.get(), nullptr));
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(EVP_PKEY_sign_init(ctx.get()));
+    ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PADDING));
+    ASSERT_TRUE(EVP_PKEY_CTX_set_signature_md(ctx.get(), EVP_sha256()));
+
+    size_t siglen = 0;
+    ASSERT_EQ(1, EVP_PKEY_sign(ctx.get(), NULL, &siglen, digest, 32));
+    ASSERT_GT(siglen, (size_t)0);
+
+    std::vector<uint8_t> sig(siglen);
+    size_t too_small = 1;
+    EXPECT_FALSE(EVP_PKEY_sign(ctx.get(), sig.data(), &too_small, digest, 32));
+    EXPECT_EQ(EVP_R_BUFFER_TOO_SMALL,
+              ERR_GET_REASON(ERR_peek_last_error()));
+    ERR_clear_error();
+  }
 }

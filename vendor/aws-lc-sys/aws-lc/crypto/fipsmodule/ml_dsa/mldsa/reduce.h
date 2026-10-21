@@ -2,40 +2,49 @@
  * Copyright (c) The mldsa-native project authors
  * SPDX-License-Identifier: Apache-2.0 OR ISC OR MIT
  */
+
+/* References
+ * ==========
+ *
+ * - [FIPS204]
+ *   FIPS 204 Module-Lattice-Based Digital Signature Standard
+ *   National Institute of Standards and Technology
+ *   https://csrc.nist.gov/pubs/fips/204/final
+ */
+
 #ifndef MLD_REDUCE_H
 #define MLD_REDUCE_H
 
-#include <stdint.h>
 #include "cbmc.h"
 #include "common.h"
 #include "ct.h"
 #include "debug.h"
 
 /* check-magic: -4186625 == pow(2,32,MLDSA_Q) */
-#define MLD_MONT -4186625
+#define MLD_MONT (-4186625)
 
 /* Upper bound for domain of mld_reduce32() */
-#define MLD_REDUCE32_DOMAIN_MAX (INT32_MAX - (1 << 22))
+#define MLD_REDUCE32_DOMAIN_MAX (INT32_MAX - ((int32_t)1 << 22))
 
 /* Absolute bound for range of mld_reduce32() */
 /* check-magic: 6283009 == (MLD_REDUCE32_DOMAIN_MAX - 255 * MLDSA_Q + 1) */
 #define MLD_REDUCE32_RANGE_MAX 6283009
 
-/*************************************************
- * Name:        mld_montgomery_reduce
+/**
+ * Generic Montgomery reduction; given a 64-bit integer a, computes a 32-bit
+ * integer congruent to a * R^-1 mod MLDSA_Q, where R=2^32.
  *
- * Description: Generic Montgomery reduction; given a 64-bit integer a, computes
- *              32-bit integer congruent to a * R^-1 mod q, where R=2^32
+ * @spec{Implements @[FIPS204, Algorithm 49, MontgomeryReduce].}
  *
- * Arguments:   - int64_t a: input integer to be reduced, of absolute value
- *                smaller or equal to INT64_MAX - 2^31 * MLDSA_Q.
+ * @param a Input integer to be reduced, of absolute value smaller or equal
+ *          to INT64_MAX - 2^31 * MLDSA_Q.
  *
- * Returns:     Integer congruent to a * R^-1 modulo q, with absolute value
- *                <= |a| / 2^32 + MLDSA_Q / 2
- *
- *              In particular, if |a| < 2^31 * MLDSA_Q, the absolute value
- *              of the return value is < MLDSA_Q.
- **************************************************/
+ * @return Integer congruent to a * R^-1 modulo MLDSA_Q, with absolute value
+ *         <= |a| / 2^32 + MLDSA_Q / 2.
+ *         In particular, if |a| < 2^31 * MLDSA_Q, the absolute value of the
+ *         return value is < MLDSA_Q.
+ */
+MLD_MUST_CHECK_RETURN_VALUE
 static MLD_INLINE int32_t mld_montgomery_reduce(int64_t a)
 __contract__(
   /* We don't attempt to express an input-dependent output bound
@@ -86,17 +95,16 @@ __contract__(
   return (int32_t)r;
 }
 
-/*************************************************
- * Name:        mld_reduce32
+/**
+ * For finite field element a with a <= 2^{31} - 2^{22} - 1, compute
+ * r congruent to a (mod MLDSA_Q) such that
+ * -MLD_REDUCE32_RANGE_MAX <= r < MLD_REDUCE32_RANGE_MAX.
  *
- * Description: For finite field element a with a <= 2^{31} - 2^{22} - 1,
- *              compute r \equiv a (mod MLDSA_Q) such that
- *              -MLD_REDUCE32_RANGE_MAX <= r < MLD_REDUCE32_RANGE_MAX.
+ * @param a Finite field element.
  *
- * Arguments:   - int32_t: finite field element a
- *
- * Returns r.
- **************************************************/
+ * @return r.
+ */
+MLD_MUST_CHECK_RETURN_VALUE
 static MLD_INLINE int32_t mld_reduce32(int32_t a)
 __contract__(
   requires(a <= MLD_REDUCE32_DOMAIN_MAX)
@@ -106,28 +114,27 @@ __contract__(
 {
   int32_t t;
 
-  t = (a + (1 << 22)) >> 23;
+  t = (a + ((int32_t)1 << 22)) >> 23;
   t = a - t * MLDSA_Q;
   mld_assert((t - a) % MLDSA_Q == 0);
   return t;
 }
 
-/*************************************************
- * Name:        mld_caddq
+/**
+ * Add MLDSA_Q if input coefficient is negative.
  *
- * Description: Add MLDSA_Q if input coefficient is negative.
+ * @param a Finite field element.
  *
- * Arguments:   - int32_t: finite field element a
- *
- * Returns r.
- **************************************************/
+ * @return r.
+ */
+MLD_MUST_CHECK_RETURN_VALUE
 static MLD_INLINE int32_t mld_caddq(int32_t a)
 __contract__(
   requires(a > -MLDSA_Q)
   requires(a < MLDSA_Q)
   ensures(return_value >= 0)
   ensures(return_value < MLDSA_Q)
-  ensures(return_value == (a >= 0) ? a : (a + MLDSA_Q))
+  ensures(return_value == ((a >= 0) ? a : (a + MLDSA_Q)))
 )
 {
   return mld_ct_sel_int32(a + MLDSA_Q, a, mld_ct_cmask_neg_i32(a));

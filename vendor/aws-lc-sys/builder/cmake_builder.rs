@@ -1,20 +1,23 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0 OR ISC
 
-use crate::cc_builder::CcBuilder;
+use crate::cc_builder::{asm_debug_prefix_map_flag, CcBuilder};
 use crate::OutputLib::{Crypto, Ssl};
 use crate::{
     allow_prebuilt_nasm, cargo_env, effective_target, emit_warning, execute_command,
-    get_crate_cflags, is_crt_static, is_fips_build, is_no_asm, is_no_pregenerated_src,
-    optional_env, optional_env_optional_crate_target, sanitizer, set_env, set_env_for_target,
-    should_build_jitter_entropy, target, target_arch, target_env, target_os, test_clang_cl_command,
-    test_nasm_command, use_prebuilt_nasm, OutputLibType,
+    export_crate_compilers, get_crate_cflags, is_crt_static, is_fips_build, is_fips_crate,
+    is_no_asm, is_no_pregenerated_src, is_small, optional_env, optional_env_optional_crate_target,
+    sanitizer, set_env, set_env_for_target, should_build_jitter_entropy, target, target_arch,
+    target_env, target_is_msvc, target_os, test_clang_cl_command, test_nasm_command,
+    use_prebuilt_nasm, OutputLibType,
 };
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+use crate::is_lto_flag;
 
 /// Strip LTO-related flags from a CFLAGS string. LTO flags interfere with the
 /// FIPS delocator pipeline, which compiles C to assembly (`-S`) and processes it
@@ -26,13 +29,25 @@ use std::str::FromStr;
 fn strip_lto_flags(cflags: &str) -> String {
     cflags
         .split_whitespace()
-        .filter(|flag| {
-            !flag.starts_with("-flto")
-                && *flag != "-ffat-lto-objects"
-                && *flag != "-fno-fat-lto-objects"
-        })
+        .filter(|flag| !is_lto_flag(flag))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+const fn cmake_bool(value: bool) -> &'static str {
+    if value {
+        "ON"
+    } else {
+        "OFF"
+    }
+}
+
+const fn cmake_nasm_small_flags(value: bool) -> &'static str {
+    if value {
+        "-DOPENSSL_SMALL=1 -DMY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX=1"
+    } else {
+        ""
+    }
 }
 
 pub(crate) struct CmakeBuilder {
@@ -98,12 +113,20 @@ impl CmakeBuilder {
             self.build_prefix.clone(),
             self.output_lib_type,
         );
+        export_crate_compilers();
         let cc_build = cc::Build::new();
-        let (is_like_msvc, build_options) =
+        let (is_cl_like, build_options) =
             cc_builder.collect_universal_build_options(&cc_build, true);
         for option in &build_options {
-            option.apply_cmake(cmake_cfg, is_like_msvc);
+            option.apply_cmake(cmake_cfg, is_cl_like);
         }
+
+        // CMake seeds `CMAKE_C_FLAGS` and `CMAKE_ASM_FLAGS` separately, so the C-side
+        // prefix-map does not cover `.S` sources; mirror it via `asmflag()` when needed.
+        if let Some(asm_flag) = asm_debug_prefix_map_flag(&self.manifest_dir) {
+            cmake_cfg.asmflag(asm_flag);
+        }
+
         cmake_cfg
     }
 
@@ -189,6 +212,26 @@ impl CmakeBuilder {
             }
         }
 
+        // Always set these cache entries (ON/OFF, flags/empty): the CMake cache in
+        // OUT_DIR persists across builds, so a stale value could survive a toggle.
+        let small = is_small();
+        let small_value = cmake_bool(small);
+        cmake_cfg.define("OPENSSL_SMALL", small_value);
+        if is_fips_crate() {
+            // Only the pinned FIPS branch needs this; mainline CMakeLists
+            // derives it from OPENSSL_SMALL.
+            cmake_cfg.define("MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX", small_value);
+        }
+        if target_os() == "windows" && target_arch() == "x86_64" {
+            // Raw NASM cannot include target.h, and add_definitions does not reach it.
+            cmake_cfg.define("CMAKE_ASM_NASM_FLAGS", cmake_nasm_small_flags(small));
+        }
+        if small {
+            emit_warning(
+                "Size-optimized AWS-LC build enabled. Applying OPENSSL_SMALL and disabling AVX-512 assembly.",
+            );
+        }
+
         Self::configure_sanitizer(&mut cmake_cfg);
 
         if let Some(cflags) = get_crate_cflags() {
@@ -221,7 +264,7 @@ impl CmakeBuilder {
             } else if use_prebuilt_nasm() {
                 self.configure_prebuilt_nasm(&mut cmake_cfg);
             }
-            if target_env().as_str() == "msvc" {
+            if target_is_msvc() {
                 let mut msvcrt = String::from_str("MultiThreaded").unwrap();
                 if is_crt_static() {
                     cmake_cfg.static_crt(true);
@@ -465,6 +508,12 @@ impl CmakeBuilder {
         emit_warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
         emit_warning("!!!   Using pre-built NASM binaries   !!!");
         emit_warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        if is_small() {
+            emit_warning(
+                "Prebuilt NASM objects cannot apply size-optimization definitions. \
+                 Install NASM to minimize Windows assembly code.",
+            );
+        }
 
         let script_path = self.select_prebuilt_nasm_script();
         let script_path = script_path.display().to_string();
@@ -653,7 +702,7 @@ impl crate::Builder for CmakeBuilder {
         }
         if target_os() == "windows"
             && target_arch() == "aarch64"
-            && target_env() == "msvc"
+            && target_is_msvc()
             && !test_clang_cl_command()
         {
             eprintln!("Missing dependency: clang-cl");
@@ -677,6 +726,12 @@ impl crate::Builder for CmakeBuilder {
     fn build(&self) -> Result<(), String> {
         self.build_library();
 
+        crate::emit_source_library_metadata(
+            &self.artifact_output_dir(),
+            self.output_lib_type,
+            &self.build_prefix,
+        );
+
         println!(
             "cargo:rustc-link-search=native={}",
             self.artifact_output_dir().display()
@@ -684,17 +739,19 @@ impl crate::Builder for CmakeBuilder {
 
         println!(
             "cargo:rustc-link-lib={}={}",
-            self.output_lib_type.rust_lib_type(),
+            self.output_lib_type.rust_link_lib_kind(),
             Crypto.libname(&self.build_prefix)
         );
 
         if cfg!(feature = "ssl") {
             println!(
                 "cargo:rustc-link-lib={}={}",
-                self.output_lib_type.rust_lib_type(),
+                self.output_lib_type.rust_link_lib_kind(),
                 Ssl.libname(&self.build_prefix)
             );
         }
+
+        crate::emit_source_build_metadata(&self.manifest_dir, &self.build_prefix);
 
         Ok(())
     }
@@ -706,7 +763,22 @@ impl crate::Builder for CmakeBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_lto_flags;
+    use super::{cmake_bool, cmake_nasm_small_flags, strip_lto_flags};
+
+    #[test]
+    fn test_cmake_bool() {
+        assert_eq!(cmake_bool(true), "ON");
+        assert_eq!(cmake_bool(false), "OFF");
+    }
+
+    #[test]
+    fn test_cmake_nasm_small_flags() {
+        assert_eq!(
+            cmake_nasm_small_flags(true),
+            "-DOPENSSL_SMALL=1 -DMY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX=1"
+        );
+        assert_eq!(cmake_nasm_small_flags(false), "");
+    }
 
     #[test]
     fn test_strip_lto_flags() {

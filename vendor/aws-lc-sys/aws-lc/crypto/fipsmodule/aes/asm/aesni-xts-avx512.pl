@@ -1456,9 +1456,12 @@ ___
 
   my $rndsuffix = &random_string();
 
+  # Keep the disabled output non-empty. Some NASM versions reject an object
+  # with no sections (nasm.us bug 3392738), and NASM 2.16.01 crashes while
+  # generating CodeView debug information for an empty section.
   $code .= <<___;
-#ifndef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
 .text
+#ifndef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
 ___
 
   {
@@ -3107,6 +3110,9 @@ ___
     .byte  0xff, 0xff, 0xff, 0xff, 0xff
 
 .text
+#endif
+#ifdef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
+.byte 0
 #endif
 ___
 } else {
