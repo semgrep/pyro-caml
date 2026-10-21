@@ -150,9 +150,17 @@ fn make_agent_builder(
         env!("CARGO_PKG_VERSION"),
         backend,
     );
+    let mut tags = string_to_tags(&cli.tags);
+    // Every profile we upload covers only the last upload interval, but
+    // Pyroscope assumes memory alloc_* profiles are cumulative (like Go's) and
+    // subtracts consecutive uploads unless told otherwise, which discards most
+    // of the data. Pyroscope strips this label on ingest.
+    if !tags.iter().any(|(key, _)| *key == "__delta__") {
+        tags.push(("__delta__", "false"));
+    }
     agent_builder = agent_builder
         // TODO: add some tags about pyro caml's version
-        .tags(string_to_tags(&cli.tags))
+        .tags(tags)
         .upload_interval(profile.upload_interval)
         .profiling_type(profile.profiling_type);
     // Optionally configure auth. localhost:4040 usually doesn't need it but
