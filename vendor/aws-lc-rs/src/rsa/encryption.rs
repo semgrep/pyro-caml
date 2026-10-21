@@ -4,7 +4,7 @@
 pub(super) mod oaep;
 pub(super) mod pkcs1;
 
-use super::key::{generate_rsa_key, is_rsa_key};
+use super::key::{generate_rsa_key, validate_rsa_key};
 use super::{encoding, KeySize};
 use crate::aws_lc::{EVP_PKEY, EVP_PKEY_RSA};
 use crate::encoding::{AsDer, Pkcs8V1Der, PublicKeyX509Der};
@@ -34,20 +34,23 @@ pub enum EncryptionAlgorithmId {
 /// An RSA private key used for decrypting ciphertext encrypted by a [`PublicEncryptingKey`].
 pub struct PrivateDecryptingKey(LcPtr<EVP_PKEY>);
 
+// https://github.com/aws/aws-lc/blob/ebaa07a207fee02bd68fe8d65f6b624afbf29394/include/openssl/evp.h#L295
+// An |EVP_PKEY| object represents a public or private RSA key. A given object may be
+// used concurrently on multiple threads by non-mutating functions, provided no
+// other thread is concurrently calling a mutating function. Unless otherwise
+// documented, functions which take a |const| pointer are non-mutating and
+// functions which take a non-|const| pointer are mutating.
+unsafe impl Send for PrivateDecryptingKey {}
+unsafe impl Sync for PrivateDecryptingKey {}
+
 impl PrivateDecryptingKey {
-    fn new(evp_pkey: LcPtr<EVP_PKEY>) -> Result<Self, Unspecified> {
+    fn new(evp_pkey: LcPtr<EVP_PKEY>) -> Result<Self, KeyRejected> {
         Self::validate_key(&evp_pkey)?;
         Ok(Self(evp_pkey))
     }
 
-    fn validate_key(key: &LcPtr<EVP_PKEY>) -> Result<(), Unspecified> {
-        if !is_rsa_key(key) {
-            return Err(Unspecified);
-        }
-        match key.as_const().key_size_bits() {
-            2048..=8192 => Ok(()),
-            _ => Err(Unspecified),
-        }
+    fn validate_key(key: &LcPtr<EVP_PKEY>) -> Result<(), KeyRejected> {
+        validate_rsa_key(key)
     }
 
     /// Generate a new RSA private key pair for use with asymmetrical encryption.
@@ -62,7 +65,7 @@ impl PrivateDecryptingKey {
     /// * `Unspecified` for any error that occurs during the generation of the RSA keypair.
     pub fn generate(size: KeySize) -> Result<Self, Unspecified> {
         let key = generate_rsa_key(size.bits())?;
-        Self::new(key)
+        Ok(Self::new(key)?)
     }
 
     /// Generate a new RSA private key pair for use with asymmetrical encryption.
@@ -89,10 +92,11 @@ impl PrivateDecryptingKey {
     /// Supports RSA key sizes between 2048 and 8192 (inclusive).
     ///
     /// # Errors
-    /// * `Unspecified` for any error that occurs during deserialization of this key from PKCS#8.
+    /// * `KeyRejected` if bytes do not encode an RSA private key or if the key is otherwise not
+    ///   acceptable.
     pub fn from_pkcs8(pkcs8: &[u8]) -> Result<Self, KeyRejected> {
         let key = LcPtr::<EVP_PKEY>::parse_rfc5208_private_key(pkcs8, EVP_PKEY_RSA)?;
-        Ok(Self::new(key)?)
+        Self::new(key)
     }
 
     /// Returns a boolean indicator if this RSA key is an approved FIPS 140-3 key.
@@ -147,29 +151,28 @@ impl Clone for PrivateDecryptingKey {
 /// An RSA public key used for encrypting plaintext that is decrypted by a [`PrivateDecryptingKey`].
 pub struct PublicEncryptingKey(LcPtr<EVP_PKEY>);
 
+// See thread-safety note on `PrivateDecryptingKey`.
+unsafe impl Send for PublicEncryptingKey {}
+unsafe impl Sync for PublicEncryptingKey {}
+
 impl PublicEncryptingKey {
-    pub(crate) fn new(evp_pkey: LcPtr<EVP_PKEY>) -> Result<Self, Unspecified> {
+    pub(crate) fn new(evp_pkey: LcPtr<EVP_PKEY>) -> Result<Self, KeyRejected> {
         Self::validate_key(&evp_pkey)?;
         Ok(Self(evp_pkey))
     }
 
-    fn validate_key(key: &LcPtr<EVP_PKEY>) -> Result<(), Unspecified> {
-        if !is_rsa_key(key) {
-            return Err(Unspecified);
-        }
-        match key.as_const().key_size_bits() {
-            2048..=8192 => Ok(()),
-            _ => Err(Unspecified),
-        }
+    fn validate_key(key: &LcPtr<EVP_PKEY>) -> Result<(), KeyRejected> {
+        validate_rsa_key(key)
     }
 
     /// Construct a `PublicEncryptingKey` from X.509 `SubjectPublicKeyInfo` DER encoded bytes.
     ///
     /// # Errors
-    /// * `Unspecified` for any error that occurs deserializing from bytes.
+    /// * `KeyRejected` if bytes do not encode a supported RSA public key or if the key is
+    ///   otherwise not acceptable.
     pub fn from_der(value: &[u8]) -> Result<Self, KeyRejected> {
         let key = encoding::rfc5280::decode_public_key_der(value)?;
-        Ok(Self::new(key)?)
+        Self::new(key)
     }
 
     /// Returns the RSA signature size in bytes.

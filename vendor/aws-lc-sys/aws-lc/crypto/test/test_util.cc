@@ -11,7 +11,7 @@
 #include <openssl/err.h>
 
 #include <thread>
-#if !defined(OPENSSL_WINDOWS)
+#if !defined(OPENSSL_WINDOWS) && !defined(OPENSSL_WASM_WASI)
  #include <sys/wait.h>
 #endif
 
@@ -348,11 +348,77 @@ testing::AssertionResult WaitForFileAccessible(const char *path) {
          << "File not accessible after retries: " << path;
 }
 
-#else
+#elif defined(OPENSSL_WASM_WASI)
+// WASI doesn't have mkstemp, mkdtemp, or tmpfile. Use counter-based naming
+// with random suffix for uniqueness.
 #include <cstdlib>
 #include <unistd.h>
+#include <openssl/rand.h>
+
 size_t createTempFILEpath(char buffer[PATH_MAX]) {
-  snprintf(buffer, PATH_MAX, "awslcTestTmpFileXXXXXX");
+  static int temp_counter = 0;
+  uint32_t random_val = 0;
+  RAND_bytes(reinterpret_cast<uint8_t*>(&random_val), sizeof(random_val));
+  int written = snprintf(buffer, PATH_MAX, "awslctest_%d_%08x.tmp",
+                         temp_counter++, random_val);
+  if (written < 0 || written >= PATH_MAX) {
+    return 0;
+  }
+  // Create the file
+  FILE *f = fopen(buffer, "w");
+  if (f == NULL) {
+    return 0;
+  }
+  fclose(f);
+  return strnlen(buffer, PATH_MAX);
+}
+
+size_t createTempDirPath(char buffer[PATH_MAX]) {
+  static int dir_counter = 0;
+  uint32_t random_val = 0;
+  RAND_bytes(reinterpret_cast<uint8_t*>(&random_val), sizeof(random_val));
+  int written = snprintf(buffer, PATH_MAX, "awslctest_dir_%d_%08x",
+                         dir_counter++, random_val);
+  if (written < 0 || written >= PATH_MAX) {
+    return 0;
+  }
+  // WASI supports mkdir
+  if (mkdir(buffer, 0700) != 0) {
+    return 0;
+  }
+  return strnlen(buffer, PATH_MAX);
+}
+
+FILE* createRawTempFILE() {
+  char buffer[PATH_MAX];
+  if (createTempFILEpath(buffer) == 0) {
+    return nullptr;
+  }
+  return fopen(buffer, "w+b");
+}
+#else
+#include <string.h>
+#include <unistd.h>
+#include <cstdlib>
+size_t createTempFILEpath(char buffer[PATH_MAX]) {
+  // Use the system temp dir, not the CWD: util/all_tests.go chdirs to the top
+  // of the checkout so tests can find their data files, so a relative name here
+  // would litter the source tree.
+  const char *tmp_dir = getenv("TMPDIR");
+  if (tmp_dir == nullptr || tmp_dir[0] == '\0') {
+    tmp_dir = "/tmp";
+  }
+  // Trim trailing slashes to avoid a doubled separator.
+  size_t tmp_dir_len = strlen(tmp_dir);
+  while (tmp_dir_len > 1 && tmp_dir[tmp_dir_len - 1] == '/') {
+    tmp_dir_len--;
+  }
+
+  int written = snprintf(buffer, PATH_MAX, "%.*s/awslcTestTmpFileXXXXXX",
+                         (int)tmp_dir_len, tmp_dir);
+  if (written < 0 || written >= PATH_MAX) {
+    return 0;
+  }
 
   int fd = mkstemp(buffer);
   if (fd == -1) {
@@ -457,9 +523,8 @@ bool threadTest(const size_t numberOfThreads, std::function<void(bool*)> testFun
 bool forkAndRunTest(std::function<bool()> child_func,
   std::function<bool()> parent_func) {
 
-#if defined(OPENSSL_WINDOWS)
-  // fork() is not supported on Windows. We could potentially add support for
-  // the CreateProcess API at some point.
+#if defined(OPENSSL_WINDOWS) || defined(OPENSSL_WASM_WASI)
+  // fork() is not supported on Windows or WASI.
   return false;
 #else
   pid_t pid = fork();
@@ -504,4 +569,12 @@ bssl::UniquePtr<BIGNUM> HexToBIGNUM(const char *hex) {
   BIGNUM *bn = nullptr;
   BN_hex2bn(&bn, hex);
   return bssl::UniquePtr<BIGNUM>(bn);
+}
+
+std::string BIGNUMToHex(const BIGNUM *bn) {
+  bssl::UniquePtr<char> hex(BN_bn2hex(bn));
+  if (hex == nullptr) {
+    return "error";
+  }
+  return hex.get();
 }

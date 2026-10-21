@@ -305,6 +305,9 @@ int BIO_write(BIO *bio, const void *in, int inl) {
 }
 
 int BIO_write_ex(BIO *bio, const void *data, size_t data_len, size_t *written_bytes) {
+  if (written_bytes != NULL) {
+    *written_bytes = 0;
+  }
   if (bio == NULL) {
     OPENSSL_PUT_ERROR(BIO, BIO_R_NULL_PARAMETER);
     return 0;
@@ -322,9 +325,6 @@ int BIO_write_ex(BIO *bio, const void *data, size_t data_len, size_t *written_by
     }
     return 1;
   } else {
-    if (written_bytes != NULL) {
-      *written_bytes = 0;
-    }
     return 0;
   }
 }
@@ -679,7 +679,9 @@ static int bio_read_all(BIO *bio, uint8_t **out, size_t *out_len,
     if (n == 0) {
       *out_len = done;
       return 1;
-    } else if (n == -1) {
+    } else if (n < 0) {
+      // |BIO_read| may report failure with any negative value, not just -1.
+      // Adding such a value to |done| would underflow it.
       OPENSSL_free(*out);
       return 0;
     }

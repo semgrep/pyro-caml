@@ -88,6 +88,16 @@ path = "tests/timer.rs"
 name = "timer-epoll"
 path = "tests/timer-epoll.rs"
 
+[dependencies]
+lazy_static = "1.5.0"
+libc = "^0.2.124"
+libflate = "2.1.0"
+log = "0.4"
+prost = "0.14"
+serde_json = "1.0.115"
+thiserror = "2.0"
+url = "2.2.2"
+
 [dependencies.aligned-vec]
 version = "0.6"
 optional = true
@@ -105,21 +115,9 @@ version = "0.16"
 optional = true
 
 [dependencies.jemalloc_pprof]
-version = "0.8"
+version = "0.9"
 features = ["symbolize"]
 optional = true
-
-[dependencies.lazy_static]
-version = "1.5.0"
-
-[dependencies.libc]
-version = "^0.2.124"
-
-[dependencies.libflate]
-version = "2.1.0"
-
-[dependencies.log]
-version = "0.4"
 
 [dependencies.memmap2]
 version = "0.9"
@@ -142,9 +140,6 @@ optional = true
 version = "1.9"
 optional = true
 
-[dependencies.prost]
-version = "0.14"
-
 [dependencies.reqwest]
 version = "0.13"
 features = [
@@ -152,9 +147,6 @@ features = [
     "query",
 ]
 default-features = false
-
-[dependencies.serde_json]
-version = "1.0.115"
 
 [dependencies.smallvec]
 version = "1.7"
@@ -174,27 +166,17 @@ default-features = false
 version = "3.1"
 optional = true
 
-[dependencies.thiserror]
-version = "2.0"
-
-[dependencies.url]
-version = "2.2.2"
-
 [dependencies.uuid]
 version = "1.20.0"
 features = ["v4"]
 
-[dev-dependencies.assert_matches]
-version = "=1.5.0"
-
-[dev-dependencies.claims]
-version = "=0.8.0"
-
-[dev-dependencies.env_logger]
-version = "=0.11.10"
+[dev-dependencies]
+assert_matches = "=1.5.0"
+claims = "=0.8.0"
+env_logger = "=0.11.10"
 
 [dev-dependencies.tikv-jemallocator]
-version = "=0.6.1"
+version = "0.7"
 features = ["profiling"]
 
 [profile.bench]

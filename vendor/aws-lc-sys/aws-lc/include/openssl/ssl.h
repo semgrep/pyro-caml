@@ -438,7 +438,9 @@ OPENSSL_EXPORT int SSL_get_error(const SSL *ssl, int ret_code);
 #define SSL_ERROR_SYSCALL 5
 
 // SSL_ERROR_ZERO_RETURN indicates the operation failed because the connection
-// was cleanly shut down with a close_notify alert.
+// was cleanly shut down with a close_notify alert, or because
+// |SSL_OP_IGNORE_UNEXPECTED_EOF| is set and the peer closed the transport
+// without sending a close_notify alert.
 #define SSL_ERROR_ZERO_RETURN 6
 
 // SSL_ERROR_WANT_CONNECT indicates the operation failed attempting to connect
@@ -635,6 +637,23 @@ OPENSSL_EXPORT int SSL_version(const SSL *ssl);
 
 // SSL_OP_NO_TICKET disables session ticket support (RFC 5077).
 #define SSL_OP_NO_TICKET 0x00004000L
+
+// SSL_OP_IGNORE_UNEXPECTED_EOF configures a connection to treat an unexpected
+// transport EOF (the peer closing the connection without sending a
+// close_notify alert) as a clean shutdown. This option only applies after the
+// handshake completes. When set, an unexpected EOF causes |SSL_read| and
+// |SSL_peek| to return zero, with |SSL_get_error| reporting
+// |SSL_ERROR_ZERO_RETURN| and an empty error queue. Otherwise, |SSL_get_error|
+// reports |SSL_ERROR_SSL| with |SSL_R_UNEXPECTED_EOF_WHILE_READING| on the
+// error queue.
+//
+// An unexpected EOF is detected when |BIO_read| on the read BIO returns zero
+// without setting retry flags (see |BIO_should_retry|). |BIO_eof| is not
+// consulted, unlike OpenSSL 3.x. Custom BIOs must therefore signal a transient
+// lack of data with |BIO_set_retry_read|, not a bare zero return. A negative
+// |BIO_read| return without retry flags is reported as |SSL_ERROR_SYSCALL|,
+// as before.
+#define SSL_OP_IGNORE_UNEXPECTED_EOF 0x00000080L
 
 // SSL_OP_CIPHER_SERVER_PREFERENCE configures servers to select ciphers and
 // ECDHE curves according to the server's preferences instead of the
@@ -845,7 +864,27 @@ OPENSSL_EXPORT int SSL_CTX_add1_chain_cert(SSL_CTX *ctx, X509 *x509);
 // it returns one and takes ownership of |x509|. Otherwise, it returns zero.
 OPENSSL_EXPORT int SSL_add0_chain_cert(SSL *ssl, X509 *x509);
 
-// SSL_CTX_add_extra_chain_cert calls |SSL_CTX_add0_chain_cert|.
+// SSL_CTX_add_extra_chain_cert appends |x509| to |ctx|'s certificate chain. On
+// success it returns one and takes ownership of |x509|; otherwise it returns
+// zero.
+//
+// OpenSSL keeps extra chain certs on a single global stack and uses it
+// whenever a certificate has no chain of its own. AWS-LC instead stores chains
+// per key-type slot, so this routes |x509| to a slot: if a leaf certificate is
+// already configured, |x509| joins the current certificate's slot (so a chain
+// built leaf-first stays together, including cross-type chains such as an RSA
+// intermediate for an ECDSA leaf); if no leaf is set yet, |x509| goes to the
+// slot matching its own key type (so chains built intermediate-first land
+// correctly once the matching leaf is added).
+//
+// To append an intermediate whose key type differs from a not-yet-configured
+// leaf (e.g. an RSA intermediate for an ECDSA leaf added before the leaf), set
+// the leaf first, or use |SSL_CTX_set1_chain|, |SSL_CTX_add1_chain_cert|, or
+// |SSL_CTX_use_certificate_chain_file|.
+//
+// |SSL_CTX_get_extra_chain_certs| and |SSL_CTX_clear_extra_chain_certs| always
+// act on the current certificate's slot, so they may target a different slot
+// than an add that routed by key type.
 OPENSSL_EXPORT int SSL_CTX_add_extra_chain_cert(SSL_CTX *ctx, X509 *x509);
 
 // SSL_add1_chain_cert appends |x509| to |ctx|'s certificate chain. It returns
@@ -1149,6 +1188,9 @@ OPENSSL_EXPORT int SSL_set_ocsp_response(SSL *ssl, const uint8_t *response,
 #define SSL_SIGN_RSA_PSS_RSAE_SHA384 0x0805
 #define SSL_SIGN_RSA_PSS_RSAE_SHA512 0x0806
 #define SSL_SIGN_ED25519 0x0807
+#define SSL_SIGN_MLDSA44 0x0904
+#define SSL_SIGN_MLDSA65 0x0905
+#define SSL_SIGN_MLDSA87 0x0906
 
 // SSL_SIGN_RSA_PKCS1_MD5_SHA1 is an internal signature algorithm used to
 // specify raw RSASSA-PKCS1-v1_5 with an MD5/SHA-1 concatenation, as used in TLS
@@ -1767,6 +1809,12 @@ OPENSSL_EXPORT int SSL_in_accept_init(const SSL *ssl);
 
 // SSL_is_init_finished returns one if |ssl| has completed its initial handshake
 // and has no pending handshake. It returns zero otherwise.
+//
+// As in OpenSSL 3.x, this also returns zero if |ssl| is in an unexpected
+// transport EOF error state, even if the handshake had completed. This does not
+// apply to EOFs ignored with |SSL_OP_IGNORE_UNEXPECTED_EOF|. Note this makes it
+// distinct from |!SSL_in_init|, which reports only whether a handshake is in
+// progress.
 OPENSSL_EXPORT int SSL_is_init_finished(const SSL *ssl);
 
 // SSL_in_init returns one if |ssl| has a pending handshake and zero
@@ -1781,9 +1829,20 @@ OPENSSL_EXPORT int SSL_in_init(const SSL *ssl);
 // See also |SSL_MODE_ENABLE_FALSE_START|.
 OPENSSL_EXPORT int SSL_in_false_start(const SSL *ssl);
 
-// SSL_get_peer_certificate returns the peer's leaf certificate or NULL if the
+// SSL_get0_peer_certificate returns the peer's leaf certificate or NULL if the
+// peer did not use certificates. The caller does not own the result and must
+// not call |X509_free| on it. The returned certificate is valid for as long as
+// the associated |SSL_SESSION| is.
+OPENSSL_EXPORT X509 *SSL_get0_peer_certificate(const SSL *ssl);
+
+// SSL_get1_peer_certificate returns the peer's leaf certificate or NULL if the
 // peer did not use certificates. The caller must call |X509_free| on the
 // result to release it.
+OPENSSL_EXPORT X509 *SSL_get1_peer_certificate(const SSL *ssl);
+
+// SSL_get_peer_certificate returns the peer's leaf certificate or NULL if the
+// peer did not use certificates. The caller must call |X509_free| on the
+// result to release it. This is an alias for |SSL_get1_peer_certificate|.
 OPENSSL_EXPORT X509 *SSL_get_peer_certificate(const SSL *ssl);
 
 // SSL_get_peer_cert_chain returns the peer's certificate chain or NULL if
@@ -2037,7 +2096,9 @@ OPENSSL_EXPORT int SSL_SESSION_to_bytes_for_ticket(const SSL_SESSION *in,
                                                    size_t *out_len);
 
 // SSL_SESSION_from_bytes parses |in_len| bytes from |in| as an SSL_SESSION. It
-// returns a newly-allocated |SSL_SESSION| on success or NULL on error.
+// returns a newly-allocated |SSL_SESSION| on success or NULL on error. The
+// caller is responsible for protecting the integrity of the serialized session
+// data; no minimum-length validation is performed on individual fields.
 OPENSSL_EXPORT SSL_SESSION *SSL_SESSION_from_bytes(const uint8_t *in,
                                                    size_t in_len,
                                                    const SSL_CTX *ctx);
@@ -2659,6 +2720,19 @@ OPENSSL_EXPORT int SSL_CTX_set1_groups(SSL_CTX *ctx, const int *groups,
 // Note that this API does not use the |SSL_GROUP_*| values defined below.
 OPENSSL_EXPORT int SSL_set1_groups(SSL *ssl, const int *groups,
                                    size_t num_groups);
+
+// SSL_CTX_set1_group_ids sets the preferred groups for |ctx| to be
+// |group_ids|. Each element of |group_ids| should be a |SSL_GROUP_*| value. It
+// returns one on success and zero on failure.
+OPENSSL_EXPORT int SSL_CTX_set1_group_ids(SSL_CTX *ctx,
+                                          const uint16_t *group_ids,
+                                          size_t num_group_ids);
+
+// SSL_set1_group_ids sets the preferred groups for |ssl| to be |group_ids|.
+// Each element of |group_ids| should be a |SSL_GROUP_*| value. It returns one
+// on success and zero on failure.
+OPENSSL_EXPORT int SSL_set1_group_ids(SSL *ssl, const uint16_t *group_ids,
+                                      size_t num_group_ids);
 
 // SSL_CTX_set1_groups_list sets the preferred groups for |ctx| to be the
 // colon-separated list |groups|. Each element of |groups| should be a curve
@@ -5984,6 +6058,68 @@ OPENSSL_EXPORT OPENSSL_DEPRECATED int SSL_CTX_get_security_level(
 OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_CTX_set_security_level(
     const SSL_CTX *ctx, int level);
 
+// SSL_get_security_level returns 0. This is only to maintain compatibility
+// with OpenSSL. See |SSL_CTX_get_security_level|.
+OPENSSL_EXPORT OPENSSL_DEPRECATED int SSL_get_security_level(const SSL *ssl);
+
+// SSL_set_security_level does nothing. See documentation in
+// |SSL_CTX_get_security_level| about implied security levels for AWS-LC.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_set_security_level(const SSL *ssl,
+                                                              int level);
+
+// SSL_security_callback is the type of a security callback function set via
+// |SSL_CTX_set_security_callback| or |SSL_set_security_callback|. In OpenSSL,
+// this callback is invoked to make security decisions based on the configured
+// security level. In AWS-LC, security levels are not supported and the callback
+// is never invoked, so any restrictions the callback would have enforced are
+// silently bypassed. These functions are provided only for API compatibility.
+typedef int (*SSL_security_callback)(const SSL *ssl, const SSL_CTX *ctx,
+                                     int op, int bits, int nid, void *other,
+                                     void *ex);
+
+// SSL_CTX_set_security_callback stores |cb| on |ctx| but never invokes it.
+// AWS-LC never invokes the callback, so any restrictions the callback would
+// have enforced are silently bypassed.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_CTX_set_security_callback(
+    SSL_CTX *ctx, SSL_security_callback cb);
+
+// SSL_CTX_get_security_callback returns the callback previously set with
+// |SSL_CTX_set_security_callback|, or NULL if none was set.
+OPENSSL_EXPORT OPENSSL_DEPRECATED SSL_security_callback
+SSL_CTX_get_security_callback(const SSL_CTX *ctx);
+
+// SSL_CTX_set0_security_ex_data stores |ex| on |ctx| for use by a security
+// callback. The data is never used internally.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_CTX_set0_security_ex_data(
+    SSL_CTX *ctx, void *ex);
+
+// SSL_CTX_get0_security_ex_data returns the data previously set with
+// |SSL_CTX_set0_security_ex_data|, or NULL if none was set.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void *SSL_CTX_get0_security_ex_data(
+    const SSL_CTX *ctx);
+
+// SSL_set_security_callback stores |cb| on |ssl| but never invokes it.
+// AWS-LC never invokes the callback, so any restrictions the callback would
+// have enforced are silently bypassed.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_set_security_callback(
+    SSL *ssl, SSL_security_callback cb);
+
+// SSL_get_security_callback returns the callback previously set with
+// |SSL_set_security_callback|, or the callback inherited from |SSL_CTX| if
+// none was set directly on the |SSL|.
+OPENSSL_EXPORT OPENSSL_DEPRECATED SSL_security_callback
+SSL_get_security_callback(const SSL *ssl);
+
+// SSL_set0_security_ex_data stores |ex| on |ssl| for use by a security
+// callback. The data is never used internally.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_set0_security_ex_data(SSL *ssl,
+                                                                 void *ex);
+
+// SSL_get0_security_ex_data returns the data previously set with
+// |SSL_set0_security_ex_data|, or NULL if none was set.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void *SSL_get0_security_ex_data(
+    const SSL *ssl);
+
 
 // General No-op Functions [Deprecated].
 
@@ -6334,6 +6470,16 @@ BSSL_NAMESPACE_END
 #define SSL_R_VERSION_TOO_HIGH (SSL_R_BACKWARDS_COMPATABILITY_OFFSET + 4)
 #define SSL_R_VERSION_TOO_LOW (SSL_R_BACKWARDS_COMPATABILITY_OFFSET + 5)
 
+// The following SSL_F_* function codes are defined for compatibility with
+// callers written against OpenSSL, which pass them as the |function| argument
+// to |ERR_put_error|. AWS-LC does not support function codes and ignores that
+// argument, so these are all defined to zero, as OpenSSL 3.0 does for its
+// legacy SSL_F_* names. SSL_F_SSL3_GET_SERVER_CERTIFICATE was removed in
+// OpenSSL 1.1.0 and is retained here for callers that still reference it.
+#define SSL_F_SSL_CTX_SET_SSL_VERSION 0
+#define SSL_F_SSL3_GET_SERVER_CERTIFICATE 0
+#define SSL_F_TLS_PROCESS_SERVER_CERTIFICATE 0
+
 #define SSL_R_APP_DATA_IN_HANDSHAKE 100
 #define SSL_R_ATTEMPT_TO_REUSE_SESSION_IN_DIFFERENT_CONTEXT 101
 #define SSL_R_BAD_ALERT 102
@@ -6564,6 +6710,7 @@ BSSL_NAMESPACE_END
 #define SSL_R_SERIALIZATION_INVALID_SSL_AEAD_CONTEXT 506
 #define SSL_R_BAD_HYBRID_KEYSHARE 507
 #define SSL_R_BAD_KEM_CIPHERTEXT 508
+#define SSL_R_UNEXPECTED_EOF_WHILE_READING 509
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020

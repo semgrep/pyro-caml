@@ -386,9 +386,12 @@ $code.=<<___;
 ___
 }
 
+# Keep the disabled output non-empty. Some NASM versions reject an object
+# with no sections (nasm.us bug 3392738), and NASM 2.16.01 crashes while
+# generating CodeView debug information for an empty section.
 $code.=<<___;
-#ifndef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
 .text
+#ifndef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
 
 .globl  rsaz_amm52x40_x1_ifma256
 .type   rsaz_amm52x40_x1_ifma256,\@function,5
@@ -888,9 +891,17 @@ rsaz_avx_handler:
     .rva    .Lrsaz_amm52x40_x2_ifma256_body,.Lrsaz_amm52x40_x2_ifma256_epilogue
 
 #endif
+#ifdef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
+.byte 0
+#endif
 ___
 } else {
-$code.="#endif";
+$code.=<<___;
+#endif
+#ifdef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
+.byte 0
+#endif
+___
 }
 
 }}} else {{{                # fallback for old assembler

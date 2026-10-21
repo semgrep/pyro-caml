@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: ISC
 
 #include <limits.h>
+#include <stdio.h>
 
 #include <algorithm>
 #include <functional>
@@ -34,6 +35,12 @@
 
 #if defined(OPENSSL_THREADS)
 #include <thread>
+#endif
+
+#if defined(OPENSSL_WINDOWS)
+#include <direct.h>
+#else
+#include <unistd.h>
 #endif
 
 static const char kX509ExtensionsCert[] = R"(
@@ -2174,7 +2181,8 @@ static bssl::UniquePtr<X509> MakeCRLDPLeaf(
 // Helper to create a CRL, optionally with an IDP extension and revoked serials.
 static bssl::UniquePtr<X509_CRL> MakeTestCRL(
     X509 *issuer_cert, EVP_PKEY *key, const char *idp_uri,
-    const std::vector<int> &revoked_serials) {
+    const std::vector<int> &revoked_serials,
+    int crl_age = 0) {
   bssl::UniquePtr<X509_CRL> crl(X509_CRL_new());
   if (!crl) {
     return nullptr;
@@ -2186,7 +2194,8 @@ static bssl::UniquePtr<X509_CRL> MakeTestCRL(
   }
   bssl::UniquePtr<ASN1_TIME> last_update(ASN1_TIME_new());
   if (!last_update ||
-      !ASN1_TIME_set_posix(last_update.get(), kReferenceTime) ||
+      !ASN1_TIME_adj(last_update.get(), kReferenceTime,
+                     crl_age, 0) ||
       !X509_CRL_set1_lastUpdate(crl.get(), last_update.get())) {
     return nullptr;
   }
@@ -2210,7 +2219,17 @@ static bssl::UniquePtr<X509_CRL> MakeTestCRL(
     }
     rev.release();  // Ownership transferred to crl.
   }
-  if (idp_uri) {
+  if (idp_uri && idp_uri[0] == '\0') {
+    // Empty IDP: extension present but no distribution point.
+    ISSUING_DIST_POINT *idp = ISSUING_DIST_POINT_new();
+    if (!idp ||
+        !X509_CRL_add1_ext_i2d(crl.get(), NID_issuing_distribution_point,
+                                idp, /*crit=*/1, /*flags=*/0)) {
+      ISSUING_DIST_POINT_free(idp);
+      return nullptr;
+    }
+    ISSUING_DIST_POINT_free(idp);
+  } else if (idp_uri) {
     ISSUING_DIST_POINT *idp = ISSUING_DIST_POINT_new();
     if (!idp) {
       return nullptr;
@@ -2322,6 +2341,360 @@ TEST(X509Test, CRLDistributionPointScope) {
     EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
               Verify(leaf.get(), {root.get()}, {root.get()},
                      {crl_a.get(), crl_b.get()}, X509_V_FLAG_CRL_CHECK));
+  }
+}
+
+static DIST_POINT_NAME *MakeRelativeDistPointName(const char *cn) {
+  DIST_POINT_NAME *dpn = DIST_POINT_NAME_new();
+  if (!dpn) {
+    return nullptr;
+  }
+  dpn->type = 1;  // nameRelativeToCRLIssuer
+  dpn->name.relativename = sk_X509_NAME_ENTRY_new_null();
+  bssl::UniquePtr<X509_NAME_ENTRY> entry(X509_NAME_ENTRY_create_by_NID(
+      nullptr, NID_commonName, MBSTRING_UTF8,
+      reinterpret_cast<const uint8_t *>(cn), -1));
+  if (!dpn->name.relativename || !entry ||
+      !bssl::PushToStack(dpn->name.relativename, std::move(entry))) {
+    DIST_POINT_NAME_free(dpn);
+    return nullptr;
+  }
+  return dpn;
+}
+
+// nameRelativeToCRLIssuer is not supported. Such distribution points must not
+// be expanded when extensions are cached, and must never match in CRL scope
+// checks.
+TEST(X509Test, CRLDPNameRelativeToCRLIssuer) {
+  bssl::UniquePtr<X509> root(CertFromPEM(kCRLTestRoot));
+  bssl::UniquePtr<EVP_PKEY> key(PrivateKeyFromPEM(kCRLTestRootKey));
+  ASSERT_TRUE(root);
+  ASSERT_TRUE(key);
+
+  const int kLeafSerial = 0x1100;
+  static const size_t kNumDPs = 64;
+  bssl::UniquePtr<CRL_DIST_POINTS> crldp(sk_DIST_POINT_new_null());
+  ASSERT_TRUE(crldp);
+  for (size_t i = 0; i < kNumDPs; i++) {
+    bssl::UniquePtr<DIST_POINT> dp(DIST_POINT_new());
+    ASSERT_TRUE(dp);
+    dp->distpoint = MakeRelativeDistPointName("CRL");
+    ASSERT_TRUE(dp->distpoint);
+    ASSERT_TRUE(bssl::PushToStack(crldp.get(), std::move(dp)));
+  }
+  auto leaf = MakeCRLDPLeaf(root.get(), key.get(), kLeafSerial, crldp.get());
+  ASSERT_TRUE(leaf);
+  // Round-trip so the extension cache is computed from parsed extensions.
+  uint8_t *der = nullptr;
+  int der_len = i2d_X509(leaf.get(), &der);
+  ASSERT_GT(der_len, 0);
+  bssl::UniquePtr<uint8_t> free_der(der);
+  const uint8_t *inp = der;
+  leaf.reset(d2i_X509(nullptr, &inp, der_len));
+  ASSERT_TRUE(leaf);
+
+  // Computing cached extensions must not construct absolute names.
+  EXPECT_FALSE(X509_get_extension_flags(leaf.get()) & EXFLAG_INVALID);
+  ASSERT_EQ(kNumDPs, sk_DIST_POINT_num(leaf->crldp));
+  for (size_t i = 0; i < kNumDPs; i++) {
+    const DIST_POINT *dp = sk_DIST_POINT_value(leaf->crldp, i);
+    ASSERT_TRUE(dp->distpoint);
+    EXPECT_EQ(1, dp->distpoint->type);
+    EXPECT_FALSE(dp->distpoint->dpname);
+  }
+
+  // Builds a CRL that revokes the leaf, with an IDP whose distributionPoint is
+  // |dpn|. Takes ownership of |dpn|.
+  auto make_crl = [&](DIST_POINT_NAME *dpn) -> bssl::UniquePtr<X509_CRL> {
+    ISSUING_DIST_POINT *idp = ISSUING_DIST_POINT_new();
+    if (!idp) {
+      DIST_POINT_NAME_free(dpn);
+      return nullptr;
+    }
+    idp->distpoint = dpn;
+    bssl::UniquePtr<X509_EXTENSION> idp_ext(
+        dpn ? X509V3_EXT_i2d(NID_issuing_distribution_point, /*crit=*/1, idp)
+            : nullptr);
+    ISSUING_DIST_POINT_free(idp);  // Also frees |dpn|.
+    if (!idp_ext) {
+      return nullptr;
+    }
+    bssl::UniquePtr<X509_CRL> crl(X509_CRL_new());
+    bssl::UniquePtr<ASN1_TIME> t(ASN1_TIME_new());
+    bssl::UniquePtr<X509_REVOKED> rev(X509_REVOKED_new());
+    bssl::UniquePtr<ASN1_INTEGER> sn(ASN1_INTEGER_new());
+    if (!crl || !t || !rev || !sn ||
+        !X509_CRL_set_version(crl.get(), X509_CRL_VERSION_2) ||
+        !X509_CRL_set_issuer_name(crl.get(),
+                                  X509_get_subject_name(root.get())) ||
+        !ASN1_TIME_adj(t.get(), kReferenceTime, 0, 0) ||
+        !X509_CRL_set1_lastUpdate(crl.get(), t.get()) ||
+        !ASN1_TIME_adj(t.get(), kReferenceTime, 30, 0) ||
+        !X509_CRL_set1_nextUpdate(crl.get(), t.get()) ||
+        !ASN1_INTEGER_set(sn.get(), kLeafSerial) ||
+        !X509_REVOKED_set_serialNumber(rev.get(), sn.get()) ||
+        !ASN1_TIME_set_posix(t.get(), kReferenceTime) ||
+        !X509_REVOKED_set_revocationDate(rev.get(), t.get()) ||
+        !X509_CRL_add0_revoked(crl.get(), rev.get())) {
+      return nullptr;
+    }
+    rev.release();  // Ownership transferred to |crl|.
+    if (!X509_CRL_add_ext(crl.get(), idp_ext.get(), /*loc=*/-1) ||
+        !X509_CRL_sign(crl.get(), key.get(), EVP_sha256())) {
+      return nullptr;
+    }
+    // Re-parse so |crl->idp| is populated.
+    uint8_t *crl_der = nullptr;
+    int crl_der_len = i2d_X509_CRL(crl.get(), &crl_der);
+    if (crl_der_len <= 0) {
+      return nullptr;
+    }
+    bssl::UniquePtr<uint8_t> free_crl_der(crl_der);
+    const uint8_t *crl_inp = crl_der;
+    return bssl::UniquePtr<X509_CRL>(
+        d2i_X509_CRL(nullptr, &crl_inp, crl_der_len));
+  };
+
+  // A CRL whose IDP uses the same relative name used to match and revoke the
+  // leaf. It is now out of scope.
+  bssl::UniquePtr<X509_CRL> crl = make_crl(MakeRelativeDistPointName("CRL"));
+  ASSERT_TRUE(crl);
+  ASSERT_TRUE(crl->idp);
+  EXPECT_FALSE(crl->idp->distpoint->dpname);
+  EXPECT_EQ(X509_V_ERR_DIFFERENT_CRL_SCOPE,
+            Verify(leaf.get(), {root.get()}, {root.get()}, {crl.get()},
+                   X509_V_FLAG_CRL_CHECK));
+
+  // A CRL whose IDP is a fullName directoryName equal to the leaf's relative
+  // name expanded against its issuer. This also used to match and revoke the
+  // leaf, and is now out of scope.
+  bssl::UniquePtr<X509_NAME> expanded(
+      X509_NAME_dup(X509_get_subject_name(root.get())));
+  ASSERT_TRUE(expanded);
+  ASSERT_TRUE(X509_NAME_add_entry_by_NID(
+      expanded.get(), NID_commonName, MBSTRING_UTF8,
+      reinterpret_cast<const uint8_t *>("CRL"), -1, /*loc=*/-1, /*set=*/0));
+  bssl::UniquePtr<GENERAL_NAMES> fullname(sk_GENERAL_NAME_new_null());
+  ASSERT_TRUE(fullname);
+  bssl::UniquePtr<GENERAL_NAME> dirname(GENERAL_NAME_new());
+  ASSERT_TRUE(dirname);
+  GENERAL_NAME_set0_value(dirname.get(), GEN_DIRNAME, expanded.release());
+  ASSERT_TRUE(bssl::PushToStack(fullname.get(), std::move(dirname)));
+  DIST_POINT_NAME *full_dpn = DIST_POINT_NAME_new();
+  ASSERT_TRUE(full_dpn);
+  full_dpn->type = 0;  // fullName
+  full_dpn->name.fullname = fullname.release();
+  crl = make_crl(full_dpn);
+  ASSERT_TRUE(crl);
+  ASSERT_TRUE(crl->idp);
+  EXPECT_EQ(X509_V_ERR_DIFFERENT_CRL_SCOPE,
+            Verify(leaf.get(), {root.get()}, {root.get()}, {crl.get()},
+                   X509_V_FLAG_CRL_CHECK));
+}
+
+// A CRL whose IDP specifically matches the certificate's CRLDP must be
+// preferred over a broad CRL (no IDP or empty IDP), regardless of freshness
+// or load order.
+TEST(X509Test, CRLSpecificIDPPreferredOverBroadCRL) {
+  bssl::UniquePtr<X509> root(CertFromPEM(kCRLTestRoot));
+  bssl::UniquePtr<EVP_PKEY> key(PrivateKeyFromPEM(kCRLTestRootKey));
+  ASSERT_TRUE(root);
+  ASSERT_TRUE(key);
+
+  const int kLeafSerial = 0x2000;
+  const char *kCRLURI = "http://example.com/crl.pem";
+
+  // Build a leaf with a single CRLDP pointing at kCRLURI.
+  bssl::UniquePtr<CRL_DIST_POINTS> crldp(sk_DIST_POINT_new_null());
+  ASSERT_TRUE(crldp);
+  bssl::UniquePtr<DIST_POINT> dp(DIST_POINT_new());
+  ASSERT_TRUE(dp);
+  dp->distpoint = MakeDistPointName(kCRLURI);
+  ASSERT_TRUE(dp->distpoint);
+  ASSERT_TRUE(bssl::PushToStack(crldp.get(), std::move(dp)));
+
+  auto leaf = MakeCRLDPLeaf(root.get(), key.get(), kLeafSerial, crldp.get());
+  ASSERT_TRUE(leaf);
+
+  // broad_newer_vs_specific_older: clean no-IDP CRL (lastUpdate=-1d) vs
+  // revoking specific CRL (lastUpdate=-2d). The broad CRL is newer.
+  {
+    SCOPED_TRACE("broad_newer_vs_specific_older");
+    auto broad_new = MakeTestCRL(root.get(), key.get(),
+                                  nullptr, {}, /*crl_age=*/-1);
+    auto specific_old = MakeTestCRL(root.get(), key.get(),
+                                    kCRLURI, {kLeafSerial},
+                                    /*crl_age=*/-2);
+    ASSERT_TRUE(broad_new);
+    ASSERT_TRUE(specific_old);
+
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {broad_new.get(), specific_old.get()},
+                     X509_V_FLAG_CRL_CHECK));
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {specific_old.get(), broad_new.get()},
+                     X509_V_FLAG_CRL_CHECK));
+  }
+
+  // empty_idp_newer_vs_specific_older: clean empty-IDP CRL (lastUpdate=-1d) vs
+  // revoking specific CRL (lastUpdate=-2d). The empty-IDP CRL is newer.
+  {
+    SCOPED_TRACE("empty_idp_newer_vs_specific_older");
+    auto empty_new = MakeTestCRL(root.get(), key.get(),
+                                  "", {}, /*crl_age=*/-1);
+    auto specific_old = MakeTestCRL(root.get(), key.get(),
+                                    kCRLURI, {kLeafSerial},
+                                    /*crl_age=*/-2);
+    ASSERT_TRUE(empty_new);
+    ASSERT_TRUE(specific_old);
+
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {empty_new.get(), specific_old.get()},
+                     X509_V_FLAG_CRL_CHECK));
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {specific_old.get(), empty_new.get()},
+                     X509_V_FLAG_CRL_CHECK));
+  }
+
+  // broad_same_age_vs_specific_same_age: both lastUpdate=-1d.
+  // Before the fix, load order determined the result.
+  {
+    SCOPED_TRACE("broad_same_age_vs_specific_same_age");
+    auto broad_same = MakeTestCRL(root.get(), key.get(),
+                                   nullptr, {}, /*crl_age=*/-1);
+    auto specific_same = MakeTestCRL(root.get(), key.get(),
+                                     kCRLURI, {kLeafSerial},
+                                     /*crl_age=*/-1);
+    ASSERT_TRUE(broad_same);
+    ASSERT_TRUE(specific_same);
+
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {broad_same.get(), specific_same.get()},
+                     X509_V_FLAG_CRL_CHECK));
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {specific_same.get(), broad_same.get()},
+                     X509_V_FLAG_CRL_CHECK));
+  }
+
+  // empty_idp_same_age_vs_specific_same_age: both lastUpdate=-1d.
+  {
+    SCOPED_TRACE("empty_idp_same_age_vs_specific_same_age");
+    auto empty_same = MakeTestCRL(root.get(), key.get(),
+                                   "", {}, /*crl_age=*/-1);
+    auto specific_same = MakeTestCRL(root.get(), key.get(),
+                                     kCRLURI, {kLeafSerial},
+                                     /*crl_age=*/-1);
+    ASSERT_TRUE(empty_same);
+    ASSERT_TRUE(specific_same);
+
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {empty_same.get(), specific_same.get()},
+                     X509_V_FLAG_CRL_CHECK));
+    EXPECT_EQ(X509_V_ERR_CERT_REVOKED,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {specific_same.get(), empty_same.get()},
+                     X509_V_FLAG_CRL_CHECK));
+  }
+
+  // specific_expired_vs_broad_in_window: a specific-IDP CRL that revokes the
+  // leaf but has expired (nextUpdate before verification time) should lose to
+  // a time-valid broad CRL. SCOPE_MATCH is intentionally not part of
+  // CRL_SCORE_VALID, so an expired specific CRL cannot outrank a valid broad
+  // CRL via the SCOPE_MATCH bit alone.
+  {
+    SCOPED_TRACE("specific_expired_vs_broad_in_window");
+    auto broad = MakeTestCRL(root.get(), key.get(), nullptr, {},
+                             /*crl_age=*/-1);
+    auto specific = MakeTestCRL(root.get(), key.get(), kCRLURI,
+                                {kLeafSerial}, /*crl_age=*/-1);
+    ASSERT_TRUE(broad);
+    ASSERT_TRUE(specific);
+
+    // Set the specific CRL's nextUpdate to before kReferenceTime so it
+    // appears expired at verification time, then re-sign and re-parse.
+    bssl::UniquePtr<ASN1_TIME> expired(ASN1_TIME_new());
+    ASSERT_TRUE(expired);
+    ASSERT_TRUE(ASN1_TIME_adj(expired.get(), kReferenceTime, -1, 0));
+    ASSERT_TRUE(X509_CRL_set1_nextUpdate(specific.get(), expired.get()));
+    ASSERT_TRUE(X509_CRL_sign(specific.get(), key.get(), EVP_sha256()));
+    uint8_t *der = nullptr;
+    int der_len = i2d_X509_CRL(specific.get(), &der);
+    ASSERT_GT(der_len, 0);
+    const uint8_t *inp = der;
+    specific.reset(d2i_X509_CRL(nullptr, &inp, der_len));
+    OPENSSL_free(der);
+    ASSERT_TRUE(specific);
+
+    // The broad in-window CRL should be preferred. Since it doesn't list
+    // the revocation, the cert verifies as OK.
+    EXPECT_EQ(X509_V_OK,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {broad.get(), specific.get()},
+                     X509_V_FLAG_CRL_CHECK));
+    EXPECT_EQ(X509_V_OK,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {specific.get(), broad.get()},
+                     X509_V_FLAG_CRL_CHECK));
+  }
+
+  // specific_with_unknown_critical_ext: a specific-IDP CRL that revokes the
+  // leaf but has an unhandled critical extension should lose to a processable
+  // broad CRL. The broad CRL doesn't list the revocation, so the cert should
+  // NOT be reported as revoked — we can't trust the specific CRL we can't
+  // fully process.
+  {
+    SCOPED_TRACE("specific_with_unknown_critical_ext");
+    auto broad = MakeTestCRL(root.get(), key.get(), nullptr, {},
+                             /*crl_age=*/-1);
+    auto specific = MakeTestCRL(root.get(), key.get(), kCRLURI,
+                                {kLeafSerial}, /*crl_age=*/-1);
+    ASSERT_TRUE(broad);
+    ASSERT_TRUE(specific);
+
+    // Add an unknown critical extension to the specific CRL, then re-sign
+    // and re-parse.
+    static const uint8_t kUnknownOID[] = {0x2b, 0x06, 0x01, 0x04, 0x01,
+                                          0x82, 0x37, 0x15, 0x24};
+    bssl::UniquePtr<ASN1_OBJECT> oid(
+        OBJ_txt2obj("1.3.6.1.4.1.311.21.36", /*dont_search_names=*/1));
+    ASSERT_TRUE(oid);
+    bssl::UniquePtr<ASN1_OCTET_STRING> ext_val(ASN1_OCTET_STRING_new());
+    ASSERT_TRUE(ext_val);
+    ASSERT_TRUE(ASN1_OCTET_STRING_set(ext_val.get(), kUnknownOID, sizeof(kUnknownOID)));
+    bssl::UniquePtr<X509_EXTENSION> ext(
+        X509_EXTENSION_create_by_OBJ(nullptr, oid.get(), /*crit=*/1,
+                                     ext_val.get()));
+    ASSERT_TRUE(ext);
+    ASSERT_TRUE(X509_CRL_add_ext(specific.get(), ext.get(), -1));
+    ASSERT_TRUE(X509_CRL_sign(specific.get(), key.get(), EVP_sha256()));
+
+    // Re-encode and re-parse to populate internal flags.
+    uint8_t *der = nullptr;
+    int der_len = i2d_X509_CRL(specific.get(), &der);
+    ASSERT_GT(der_len, 0);
+    const uint8_t *inp = der;
+    specific.reset(d2i_X509_CRL(nullptr, &inp, der_len));
+    OPENSSL_free(der);
+    ASSERT_TRUE(specific);
+
+    // The broad CRL should be preferred since the specific one has an
+    // unprocessable critical extension. The broad CRL doesn't revoke the
+    // leaf, so verification should succeed (cert not revoked).
+    EXPECT_EQ(X509_V_OK,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {broad.get(), specific.get()},
+                     X509_V_FLAG_CRL_CHECK));
+    EXPECT_EQ(X509_V_OK,
+              Verify(leaf.get(), {root.get()}, {root.get()},
+                     {specific.get(), broad.get()},
+                     X509_V_FLAG_CRL_CHECK));
   }
 }
 
@@ -2555,16 +2928,34 @@ TEST(X509Test, NameConstraints) {
       {GEN_EMAIL, "foo@example.com", "foo@EXAMPLE.COM", X509_V_OK,
        X509_V_ERR_EXCLUDED_VIOLATION},
       {GEN_EMAIL, "foo@example.com", "FOO@example.com",
-       X509_V_ERR_PERMITTED_VIOLATION, X509_V_OK},
+       X509_V_ERR_PERMITTED_VIOLATION, X509_V_ERR_EXCLUDED_VIOLATION},
       {GEN_EMAIL, "foo@example.com", "bar@example.com",
        X509_V_ERR_PERMITTED_VIOLATION, X509_V_OK},
-      // OpenSSL ignores a stray leading @.
-      {GEN_EMAIL, "foo@example.com", "@example.com", X509_V_OK,
-       X509_V_ERR_EXCLUDED_VIOLATION},
-      {GEN_EMAIL, "foo@example.com", "@EXAMPLE.COM", X509_V_OK,
-       X509_V_ERR_EXCLUDED_VIOLATION},
+      // "@example.com" is not a valid constraint per RFC 5280 Sec.4.2.1.10.
+      {GEN_EMAIL, "foo@example.com", "@example.com",
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
+      {GEN_EMAIL, "foo@example.com", "@EXAMPLE.COM",
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
       {GEN_EMAIL, "foo@bar.example.com", "@example.com",
-       X509_V_ERR_PERMITTED_VIOLATION, X509_V_OK},
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
+
+      // Reject subject emails with quoted local-parts.
+      // A quoted local-part containing '@' would cause the parser to split
+      // at the wrong '@', bypassing name constraints.
+      {GEN_EMAIL, "\"a@b\"@evil.example", ".evil.example",
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
+      // Reject subject emails with multiple '@' signs.
+      {GEN_EMAIL, "a@b@evil.example", ".evil.example",
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
+      // Reject constraints with multiple '@' signs.
+      {GEN_EMAIL, "foo@example.com", "a@b@example.com",
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
+       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
 
       // Basic syntax check.
       {GEN_URI, "not-a-url", "not-a-url", X509_V_ERR_UNSUPPORTED_NAME_SYNTAX,
@@ -3880,6 +4271,166 @@ TEST(X509Test, NameHash) {
   }
 }
 
+// ScopedCertDir is a temp directory of CA certs named per
+// |X509_LOOKUP_hash_dir|'s "HASH.0" convention. It removes everything it
+// created on destruction, even from partial setup.
+struct ScopedCertDir {
+  char path[PATH_MAX];
+  std::vector<std::string> files;
+
+  ScopedCertDir() {
+    if (createTempDirPath(path) == 0) {
+      path[0] = '\0';
+    }
+  }
+  ScopedCertDir(const ScopedCertDir &) = delete;
+  ScopedCertDir &operator=(const ScopedCertDir &) = delete;
+  ~ScopedCertDir() {
+    for (const auto &file : files) {
+      remove(file.c_str());
+    }
+    if (path[0] != '\0') {
+#if defined(OPENSSL_WINDOWS)
+      _rmdir(path);
+#else
+      rmdir(path);
+#endif
+    }
+  }
+
+  // Signs |cert| with |key| and writes it under this directory's hash-based
+  // filename.
+  bool AddCert(X509 *cert, EVP_PKEY *key) {
+    if (path[0] == '\0' || !X509_sign(cert, key, EVP_sha256())) {
+      return false;
+    }
+    uint32_t hash = X509_NAME_hash(X509_get_subject_name(cert));
+    char file[PATH_MAX];
+    int n = snprintf(file, sizeof(file), "%s/%08lx.0", path,
+                     static_cast<unsigned long>(hash));
+    if (hash == 0 || n < 0 || static_cast<size_t>(n) >= sizeof(file)) {
+      return false;
+    }
+    FILE *f = fopen(file, "wb");
+    if (f == nullptr) {
+      return false;
+    }
+    files.push_back(file);
+    const bool ok = PEM_write_X509(f, cert) == 1;
+    const int close_result = fclose(f);
+    return ok && close_result == 0;
+  }
+};
+
+// Looks up |leaf|'s issuer via a fresh |X509_LOOKUP_hash_dir| configured
+// with |path|, as |X509_STORE_load_locations| would. Returns the issuer, or
+// null if none was found.
+static bssl::UniquePtr<X509> FindIssuerInDir(X509 *leaf, const char *path) {
+  bssl::UniquePtr<X509_STORE> store(X509_STORE_new());
+  if (!store || X509_STORE_load_locations(store.get(), nullptr, path) != 1) {
+    return nullptr;
+  }
+  bssl::UniquePtr<X509_STORE_CTX> ctx(X509_STORE_CTX_new());
+  if (!ctx || !X509_STORE_CTX_init(ctx.get(), store.get(), leaf, nullptr)) {
+    return nullptr;
+  }
+  X509 *issuer = nullptr;
+  X509_STORE_CTX_get1_issuer(&issuer, ctx.get(), leaf);
+  return bssl::UniquePtr<X509>(issuer);
+}
+
+// |add_cert_dir| splits |path| into multiple directories on ':' (';' on
+// Windows, since a Windows directory itself may start with a drive letter
+// followed by ':'). Regression test: both directories of a two-entry list
+// must be searched.
+TEST(X509Test, HashDirMultipleDirectories) {
+#if defined(OPENSSL_ANDROID)
+  // Android app processes cannot create files under /tmp, which
+  // |createTempDirPath| uses. See |BIOTest.CloseFlags|.
+  GTEST_SKIP();
+#endif
+
+  bssl::UniquePtr<EVP_PKEY> key = PrivateKeyFromPEM(kP256Key);
+  ASSERT_TRUE(key);
+  ScopedCertDir dir_a, dir_b;
+  ASSERT_TRUE(dir_a.path[0]);
+  ASSERT_TRUE(dir_b.path[0]);
+
+  bssl::UniquePtr<X509> root_a =
+      MakeTestCert("Root A", "Root A", key.get(), /*is_ca=*/true);
+  bssl::UniquePtr<X509> root_b =
+      MakeTestCert("Root B", "Root B", key.get(), /*is_ca=*/true);
+  ASSERT_TRUE(root_a);
+  ASSERT_TRUE(root_b);
+  ASSERT_TRUE(dir_a.AddCert(root_a.get(), key.get()));
+  ASSERT_TRUE(dir_b.AddCert(root_b.get(), key.get()));
+
+  bssl::UniquePtr<X509> leaf_a =
+      MakeTestCert("Root A", "Leaf A", key.get(), /*is_ca=*/false);
+  bssl::UniquePtr<X509> leaf_b =
+      MakeTestCert("Root B", "Leaf B", key.get(), /*is_ca=*/false);
+  ASSERT_TRUE(leaf_a);
+  ASSERT_TRUE(leaf_b);
+  ASSERT_TRUE(X509_sign(leaf_a.get(), key.get(), EVP_sha256()));
+  ASSERT_TRUE(X509_sign(leaf_b.get(), key.get(), EVP_sha256()));
+
+#if defined(OPENSSL_WINDOWS)
+  std::string path = std::string(dir_a.path) + ";" + dir_b.path;
+#else
+  std::string path = std::string(dir_a.path) + ":" + dir_b.path;
+#endif
+
+  bssl::UniquePtr<X509> found_a = FindIssuerInDir(leaf_a.get(), path.c_str());
+  bssl::UniquePtr<X509> found_b = FindIssuerInDir(leaf_b.get(), path.c_str());
+  ASSERT_TRUE(found_a);
+  ASSERT_TRUE(found_b);
+  EXPECT_EQ(0, X509_NAME_cmp(X509_get_subject_name(found_a.get()),
+                             X509_get_subject_name(root_a.get())));
+  EXPECT_EQ(0, X509_NAME_cmp(X509_get_subject_name(found_b.get()),
+                             X509_get_subject_name(root_b.get())));
+}
+
+#if defined(OPENSSL_WINDOWS)
+// An unused drive letter must not cause lookup in a matching directory on
+// the current drive. No drive mappings or working directories are changed.
+TEST(X509Test, HashDirDoesNotSplitDriveLetter) {
+  ScopedCertDir dir;
+  ASSERT_NE('\0', dir.path[0]);
+  char cwd[PATH_MAX];
+  ASSERT_NE(nullptr, _getcwd(cwd, sizeof(cwd)));
+  if (dir.path[1] != ':' || OPENSSL_strncasecmp(dir.path, cwd, 2) != 0) {
+    GTEST_SKIP() << "Temp directory must be on the current drive";
+  }
+  DWORD drives = GetLogicalDrives();
+  ASSERT_NE(0u, drives);
+  char fake_drive = 0;
+  for (char c = 'A'; c <= 'Z'; c++) {
+    if (!(drives & (1u << (c - 'A')))) {
+      fake_drive = c;
+      break;
+    }
+  }
+  if (fake_drive == 0) {
+    GTEST_SKIP() << "No unused drive letter available";
+  }
+
+  bssl::UniquePtr<EVP_PKEY> key = PrivateKeyFromPEM(kP256Key);
+  ASSERT_TRUE(key);
+  bssl::UniquePtr<X509> decoy =
+      MakeTestCert("Decoy", "Decoy", key.get(), /*is_ca=*/true);
+  ASSERT_TRUE(decoy);
+  ASSERT_TRUE(dir.AddCert(decoy.get(), key.get()));
+  bssl::UniquePtr<X509> leaf =
+      MakeTestCert("Decoy", "Leaf", key.get(), /*is_ca=*/false);
+  ASSERT_TRUE(leaf);
+  ASSERT_TRUE(X509_sign(leaf.get(), key.get(), EVP_sha256()));
+
+  ASSERT_TRUE(FindIssuerInDir(leaf.get(), dir.path));
+  std::string fake_path = std::string(1, fake_drive) + ":" + (dir.path + 2);
+  EXPECT_FALSE(FindIssuerInDir(leaf.get(), fake_path.c_str()));
+}
+#endif  // OPENSSL_WINDOWS
+
 TEST(X509Test, NoBasicConstraintsCertSign) {
   bssl::UniquePtr<X509> root(CertFromPEM(kSANTypesRoot));
   bssl::UniquePtr<X509> intermediate(
@@ -4053,6 +4604,55 @@ TEST(X509Test, PEMX509Info) {
   EXPECT_FALSE(
       PEM_X509_INFO_read_bio(bio.get(), infos.get(), nullptr, nullptr));
   EXPECT_EQ(2 * OPENSSL_ARRAY_SIZE(kExpected), sk_X509_INFO_num(infos.get()));
+}
+
+// |PEM_X509_INFO_write_bio| writes the legacy, per-algorithm PEM types, so the
+// key types |PEM_X509_INFO_read_bio| understands all round-trip. It used to
+// assume the key was RSA and pass NULL to |PEM_write_bio_RSAPrivateKey|.
+TEST(X509Test, WriteInfoWithKey) {
+  const struct {
+    const char *pem;
+    const char *expected_header;
+  } kTests[] = {
+      {kRSAKey, "-----BEGIN RSA PRIVATE KEY-----"},
+      {kP256Key, "-----BEGIN EC PRIVATE KEY-----"},
+  };
+
+  for (const auto &test : kTests) {
+    SCOPED_TRACE(test.expected_header);
+
+    bssl::UniquePtr<EVP_PKEY> key = PrivateKeyFromPEM(test.pem);
+    ASSERT_TRUE(key);
+
+    // These are zeroed rather than brace-initialized because GCC 4.8 reports an
+    // empty initializer list as a missing field initializer.
+    X509_PKEY x_pkey;
+    OPENSSL_memset(&x_pkey, 0, sizeof(x_pkey));
+    X509_INFO info;
+    OPENSSL_memset(&info, 0, sizeof(info));
+    info.x_pkey = &x_pkey;
+    x_pkey.dec_pkey = key.get();
+
+    bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
+    ASSERT_TRUE(bio);
+    ASSERT_TRUE(PEM_X509_INFO_write_bio(bio.get(), &info, nullptr, nullptr, 0,
+                                        nullptr, nullptr));
+    const uint8_t *data = nullptr;
+    size_t len = 0;
+    ASSERT_TRUE(BIO_mem_contents(bio.get(), &data, &len));
+    EXPECT_NE(std::string(reinterpret_cast<const char *>(data), len)
+                  .find(test.expected_header),
+              std::string::npos);
+
+    // The output reads back as the same key.
+    bssl::UniquePtr<STACK_OF(X509_INFO)> infos(
+        PEM_X509_INFO_read_bio(bio.get(), nullptr, nullptr, nullptr));
+    ASSERT_TRUE(infos);
+    ASSERT_EQ(1u, sk_X509_INFO_num(infos.get()));
+    const X509_INFO *read_info = sk_X509_INFO_value(infos.get(), 0);
+    ASSERT_TRUE(read_info->x_pkey);
+    EXPECT_EQ(1, EVP_PKEY_cmp(key.get(), read_info->x_pkey->dec_pkey));
+  }
 }
 
 TEST(X509Test, ReadBIOEmpty) {
@@ -6392,6 +6992,40 @@ TEST(X509Test, NamePrint) {
       truncated += component;
     }
     EXPECT_EQ(buf, truncated);
+  }
+}
+
+TEST(X509Test, NamePrintMissingAttributeName) {
+  // This test affects library-global state. We rely on nothing else in the test
+  // suite using these OIDs.
+  int nid_no_ln =
+      OBJ_create("1.2.840.113554.4.1.72585.1010", "short name only", nullptr);
+  ASSERT_NE(NID_undef, nid_no_ln);
+  int nid_no_sn =
+      OBJ_create("1.2.840.113554.4.1.72585.1011", nullptr, "long name only");
+  ASSERT_NE(NID_undef, nid_no_sn);
+
+  const struct {
+    int nid;
+    unsigned long flags;
+  } kTests[] = {
+      {nid_no_ln, XN_FLAG_SEP_COMMA_PLUS | XN_FLAG_FN_LN},
+      {nid_no_sn, XN_FLAG_SEP_COMMA_PLUS | XN_FLAG_FN_SN},
+  };
+  for (const auto &t : kTests) {
+    SCOPED_TRACE(t.nid);
+    bssl::UniquePtr<X509_NAME> name(X509_NAME_new());
+    ASSERT_TRUE(name);
+    ASSERT_TRUE(X509_NAME_add_entry_by_NID(
+        name.get(), t.nid, V_ASN1_PRINTABLESTRING,
+        reinterpret_cast<const uint8_t *>("value"), 5, /*loc=*/-1, /*set=*/0));
+
+    bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
+    ASSERT_TRUE(bio);
+    EXPECT_EQ(X509_NAME_print_ex(bio.get(), name.get(), /*indent=*/0, t.flags),
+              -1);
+    EXPECT_EQ(X509_NAME_print_ex(nullptr, name.get(), /*indent=*/0, t.flags),
+              -1);
   }
 }
 

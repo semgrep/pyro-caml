@@ -4,8 +4,8 @@
 #include <openssl/asm_base.h>
 
 #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && defined(__ELF__)
-#ifndef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
 .text	
+#ifndef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
 
 .globl	rsaz_amm52x30_x1_ifma256
 .hidden rsaz_amm52x30_x1_ifma256
@@ -1320,5 +1320,8 @@ extract_multiplier_2x30_win5:
 .Lzeros:
 .quad	0,0,0,0
 .text	
+#endif
+#ifdef MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX
+.byte	0
 #endif
 #endif
